@@ -17,22 +17,14 @@ from browser_use.browser import BrowserSession
 from browser_use.llm import ChatAnthropic, ChatOpenAI
 
 TG_URL = 'https://web.telegram.org/k/'
-PROFILE = os.path.expanduser('~/.tg-agent-profile')  # = пароль: полный доступ к аккаунту
+PROFILE = os.path.expanduser('~/.tg-use-agent-profile')  # = пароль: полный доступ к аккаунту
 
 
 def llm():
-    """LLM контура browser-use: z.ai (OpenAI-совместимый endpoint), fallback — Anthropic."""
-    if os.environ.get('ZAI_API_KEY'):
-        return ChatOpenAI(
-            model='glm-5.3',
-            base_url='https://api.z.ai/api/paas/v4',
-            api_key=os.environ['ZAI_API_KEY'],
-        )
-    return ChatAnthropic(
-        model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'),
-        base_url=os.environ.get('ANTHROPIC_BASE_URL'),
-        api_key=os.environ.get('ANTHROPIC_API_KEY'),
-    )
+    """LLM контура browser-use: любой OpenAI-совместимый endpoint (ключ и base_url в env), fallback — Anthropic."""
+    if os.environ.get('OPENAI_API_KEY'):
+        return ChatOpenAI(model=os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'))
+    return ChatAnthropic(model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'))
 
 
 async def ask(task: str) -> str:
