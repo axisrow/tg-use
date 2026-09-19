@@ -4,7 +4,7 @@
 живут внутри него. Наш код — только CLI, конфиг Browser/LLM и функции скелета.
 
 Безопасность: темп 2–3 c между действиями; только диалоги с ботами, ни одного
-сообщения живым людям; ~/.tg-agent-profile = пароль (полный доступ к аккаунту).
+сообщения живым людям; ~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
 """
 
 import argparse
@@ -35,7 +35,11 @@ async def ask(task: str) -> str:
 
 
 def parse_state(raw: str) -> dict:
-    state = json.loads(raw.strip().removeprefix('```json').removesuffix('```').strip())
+    """JSON из ответа LLM: срезать markdown-забор (```json или голый ```) при наличии."""
+    s = raw.strip().removesuffix('```')
+    if s.startswith('```'):
+        s = s.removeprefix('```json').removeprefix('```')
+    state = json.loads(s.strip())
     return {'text': state.get('text', ''), 'buttons': state.get('buttons', [])}
 
 
@@ -54,7 +58,7 @@ async def click(label: str) -> str:
 
 
 async def cmd_login() -> None:
-    """Headed-логин; QR сканирует человек, сессия живёт в ~/.tg-agent-profile."""
+    """Headed-логин; QR сканирует человек, сессия живёт в ~/.tg-use-agent-profile."""
     browser = BrowserSession(user_data_dir=PROFILE, headless=False)
     await browser.start()
     await (await browser.must_get_current_page()).goto(TG_URL)
