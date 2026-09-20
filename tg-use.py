@@ -44,7 +44,7 @@ JS_STATE = '''() => {
   const t = last.querySelector('.translatable-message') || last.querySelector('.message');
   const buttons = [...last.querySelectorAll('button.reply-markup-button')]
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
-  return {text: (t ? t.innerText : '').trim(), buttons};
+  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length};
 }'''
 
 # индекс кнопки по подписи среди всех кнопок документа (для get_elements_by_css_selector)
@@ -87,9 +87,17 @@ def state_key(st: dict) -> str:
     return hashlib.sha1((st['text'] + str(sorted(st['buttons']))).encode()).hexdigest()
 
 
+def reaction_key(st: dict) -> str:
+    """Ключ для ожидания реакции: тот же ключ + число входящих сообщений,
+    чтобы повтор-дубль от бота (тот же текст) считался реакцией, а не тишиной."""
+    return hashlib.sha1((str(st.get('n', 0)) + st['text'] + str(sorted(st['buttons']))).encode()).hexdigest()
+
+
 def check_expect(text: str, expect: dict | None) -> tuple[bool, str]:
     """Ожидания шага против текста последнего сообщения бота: contains и/или regex."""
     for kind, pat in (expect or {}).items():
+        if kind not in ('contains', 'regex'):  # опечатка в сценарии = падение, не ложный PASS
+            return False, f'неизвестный expect: {kind!r} (умею contains/regex)'
         if kind == 'contains' and pat not in text:
             return False, f'в тексте нет «{pat}»'
         if kind == 'regex' and not re.search(pat, text):
@@ -136,7 +144,7 @@ async def wait_reaction(page, before_key: str) -> dict:
     while True:
         await asyncio.sleep(POLL)
         st = await read_state(page)
-        if state_key(st) != before_key:
+        if reaction_key(st) != before_key:
             return st
         if time.monotonic() > deadline:
             raise RuntimeError('реакции бота не последовало (состояние не изменилось)')
@@ -152,7 +160,7 @@ async def do_click(page, label: str) -> dict:
         raise RuntimeError(f'кнопки «{label}» нет под последним сообщением бота')
     button = (await page.get_elements_by_css_selector('button.reply-markup-button'))[idx]
     await button.click()
-    return await wait_reaction(page, state_key(before))
+    return await wait_reaction(page, reaction_key(before))
 
 
 async def do_send(page, text: str) -> dict:
@@ -165,7 +173,7 @@ async def do_send(page, text: str) -> dict:
     if typed != 'typed:true':
         raise RuntimeError(f'не удалось ввести «{text}» (поле ввода: {typed or "нет ответа"})')
     await page.press('Enter')
-    return await wait_reaction(page, state_key(before))
+    return await wait_reaction(page, reaction_key(before))
 
 
 def shown(st: dict) -> dict:
@@ -221,22 +229,25 @@ async def cmd_click(label: str) -> None:
 
 async def cmd_save(from_id: str, button: str, bot: str) -> None:
     """Дописать текущее состояние (и ребро from --button, если задано) в flow.json/flow.md."""
+    if button and not from_id:  # иначе кнопка потерялась бы молча
+        raise SystemExit('--button без --from: ребро некуда прикрепить')
+    try:
+        flow = json.load(open(os.path.join(ART, 'flow.json')))
+    except FileNotFoundError:
+        flow = {'bot': bot, 'states': [], 'edges': []}
+    if from_id and from_id[:8] not in {s['id'] for s in flow['states']}:
+        # опечатка в id = висячее ребро и битая ссылка в Mermaid; проверяем до подключения к браузеру
+        raise SystemExit(f'--from {from_id[:8]}: нет такого состояния в {ART}/flow.json')
     browser = await connect()
     try:
         page = await browser.must_get_current_page()
         st = shown(await read_state(page))
     finally:
         await browser.stop()
-    try:
-        flow = json.load(open(os.path.join(ART, 'flow.json')))
-    except FileNotFoundError:
-        flow = {'bot': bot, 'states': [], 'edges': []}
     new = st['id'] not in {s['id'] for s in flow['states']}
     if new:
         flow['states'].append({k: st[k] for k in ('id', 'text', 'buttons')})
     if from_id:
-        if not button:
-            raise SystemExit('ребро требует и --from, и --button')
         edge = {'from': from_id[:8], 'to': st['id'], 'button': button}
         if edge not in flow['edges']:
             flow['edges'].append(edge)
