@@ -142,8 +142,10 @@ class OpenPage:
         if '.chat-info' in js:  # JS_OPEN_INFO
             assert self.info, 'неожиданный JS_OPEN_INFO (лишняя проба)'
             return self.info.pop(0)
-        if 'search-group' in js:  # JS_CLICK_FOUND
+        if 'chatlist-chat' in js:  # JS_CLICK_FOUND
             return self.found.pop(0)
+        if 'search-trigger' in js:  # JS_SEARCH_TRIGGER
+            return 'True'
         if 'location.href' in js:
             return self.href
         assert 'input-search-input' in js, 'неожиданный evaluate'  # JS_OPEN_SEARCH

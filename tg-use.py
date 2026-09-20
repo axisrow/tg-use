@@ -223,23 +223,30 @@ JS_OPEN_INFO = '''() => {
           bodyLen: document.body ? document.body.innerText.length : 0};  // 0 = не смонтирован
 }'''
 
-# локальный поиск tweb индексирует диалоги вместе с username (getUserSearchText) —
-# единственный путь username → чат: hash-роутинг webk перехватывает hash-навигации,
-# глобального резолва без Enter нет. Ищем username, кликаем первый результат группы.
+# локальный поиск: панель может быть свёрнута (querySelector хватает скрытого
+# поля-двойника) — берём только видимое поле; если панель закрыта, открывает триггер.
 JS_OPEN_SEARCH = '''(query) => {
-  const input = document.querySelector('.input-search-input');
-  if (!input) return 0;
-  input.focus();
-  input.value = '';  // без очистки старый запрос глушит новый ввод
+  const fields = [...document.querySelectorAll('.input-search-input')]
+    .filter(e => e.offsetParent !== null);
+  if (!fields.length) return 0;
+  fields[0].focus();
+  fields[0].value = '';  // без очистки старый запрос глушит новый ввод
   document.execCommand('insertText', false, query);
   return 1;
 }'''
 
-# результат поисковой группы, чей текст содержит @username (подзаголовок результата):
-# клик и его peer-id; '' если ещё не отрендерилось. Полный набор mousedown/mouseup/click —
+JS_SEARCH_TRIGGER = '''() => {
+  const t = document.querySelector('.sidebar-header-search-trigger');
+  if (t) t.click();
+  return !!t;
+}'''
+
+# строка результата поиска: при открытой панели видимые .chatlist-chat — только
+# результаты, но их текст содержит display name (BotFather | 8 576 822 users),
+# а не @username — матчим по имени бота. Полный набор mousedown/mouseup/click —
 # голый el.click() tweb-строку не открывает
 JS_CLICK_FOUND = '''(needle) => {
-  const el = [...document.querySelectorAll('.search-group .chatlist-chat')]
+  const el = [...document.querySelectorAll('.chatlist-chat')]
     .find(e => e.offsetParent !== null && (e.innerText || '').toLowerCase().includes(needle));
   if (!el) return '';
   const peer = el.getAttribute('data-peer-id') || (el.getAttribute('href') || '').slice(1);
@@ -294,26 +301,29 @@ async def cmd_open(bot: str) -> None:
             await page.goto(TG_URL)
         if not (await wait_open(page, 15))['bodyLen']:  # медленный старт — норма: до ~30 c
             browser, page = await revive_page(browser)  # воркеры webk залипли — оживляем
-        # tweb индексирует диалоги вместе с username (getUserSearchText): локальный поиск —
-        # единственный путь username → чат; результат даёт data-peer-id для верификации
+        # локальный поиск — путь username → чат; результат даёт data-peer-id для верификации
         if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
-            raise SystemExit('нет поля поиска webk; ничего не отправлено')
+            await page.evaluate(JS_SEARCH_TRIGGER)  # панель поиска свёрнута — открыть кликом
+            await asyncio.sleep(OPEN_POLL)
+            if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
+                raise SystemExit('нет поля поиска webk; ничего не отправлено')
         peer = ''
         for _ in range(10):  # ~20 c: индекс/рендер результатов
-            peer = (await page.evaluate(JS_CLICK_FOUND, '@' + name.lower())) or ''
+            peer = (await page.evaluate(JS_CLICK_FOUND, name.lower())) or ''
             if peer:
                 break
             await asyncio.sleep(OPEN_POLL)
         if not peer:
             raise SystemExit(f'чат {bot} не найден в диалогах webk (поиск по username); '
                              f'ничего не отправлено')
-        # tweb переписывает hash на #peerId или #@username — ждём любой из двух
-        st = await wait_open(page, 10, want=('#' + peer, '#@' + name.lower()))
+        # tweb переписывает hash на #peerId (у ботов #<минус>peerId), #@username — ждём любой
+        st = await wait_open(page, 10, want=('#' + peer, '#-' + peer, '#@' + name.lower()))
         await asyncio.sleep(OPEN_POLL)  # дать плашке чата устаканиться после закрытия поиска
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
     finally:
         await browser.stop()
-    if not (st['bodyLen'] and st['hash'].lower() in ('#' + peer.lower(), '#@' + name.lower())):
+    if not (st['bodyLen'] and st['hash'].lower() in ('#' + peer.lower(), '#-' + peer.lower(),
+                                                     '#@' + name.lower())):
         raise SystemExit(f'чат {bot} не открылся (hash: {st["hash"] or "пусто"}, '
                          f'заголовок: {st["title"] or "пусто"}); ничего не отправлено')
     print(json.dumps({'opened': bot, 'title': st['title'], 'hash': st['hash']}, ensure_ascii=False))
