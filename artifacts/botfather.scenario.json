@@ -1,0 +1,6 @@
+[
+  {"do": {"send": "/start"}, "expect": {"contains": "create and manage Telegram bots"}},
+  {"do": {"send": "/mybots"}, "expect": {"contains": "Choose a bot from the list"}},
+  {"do": {"click": "@leadhunter_8602734479_bot"}, "expect": {"contains": "What do you want to do with the bot?"}},
+  {"do": {"click": "« Back to Bot List"}, "expect": {"contains": "Choose a bot from the list"}}
+]

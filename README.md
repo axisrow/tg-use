@@ -51,6 +51,7 @@ Browser Harness из коробки цепляется к обычному Chrom
 | Команда | Что делает |
 |---|---|
 | `tg-use.py login` | headed-браузер с persistent-профилем; адрес → `~/.tg-use-cdp` |
+| `tg-use.py open <@bot>` | открыть чат бота: поиск webk по username + клик по результату, guard по peer-id в hash; без отправок |
 | `tg-use.py state` | JSON: текст последнего сообщения бота + подписи кнопок |
 | `tg-use.py click "<label>"` | нажать inline-кнопку, вернуть новое состояние; deny-лист и отсутствие кнопки/реакции = ошибка (exit 1) |
 | `tg-use.py save [--from id --button label] [--bot @name]` | дописать состояние/ребро в `artifacts/flow.json` + `artifacts/flow.md` (Mermaid) |
@@ -59,3 +60,14 @@ Browser Harness из коробки цепляется к обычному Chrom
 Дальше — по скиллу `.claude/skills/tg-use/SKILL.md`: малый обход (глубина ≤2,
 до ~5 состояний) и прогон сценариев. Безопасность: темп 2–3 c между действиями,
 только диалоги с ботами, скраб токенов в выводе, PNG не сохраняем (v2).
+
+## Тесты и категории
+
+Граница категорий — цена ошибки. `unit`: offline-скрипты, безопасный дефолт —
+`python3 test_skeleton.py && python3 test_crawl.py && python3 test_hands.py`.
+`state`/`open` — live_read (чтение/открытие чата без отправок); `click`/`save` —
+live_write (обратимые действия в диалоге с ботом); `test`/`login` —
+live_write_danger (необратимая отправка боту / полный доступ к аккаунту).
+Гейты — в `.claude/settings.json`: владелец 2026-09-20 разрешил все подкоманды
+целиком (`Bash(python3 tg-use.py:*)`), категории остались описанием цены ошибки,
+а не спросом харнеса.

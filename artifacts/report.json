@@ -1,21 +1,33 @@
 {
-  "scenario": "mybots.scenario.json",
-  "pass": false,
+  "scenario": "botfather.scenario.json",
+  "pass": true,
   "steps": [
     {
       "step": 1,
       "do": {
-        "send": "/mybots"
+        "send": "/start"
       },
       "expect": {
-        "contains": "Choose a bot from the list below"
+        "contains": "create and manage Telegram bots"
       },
       "pass": true,
-      "ms": 2509,
-      "text": "Choose a bot from the list below:"
+      "ms": 2507,
+      "text": "I can help you create and manage Telegram bots. If you're new to the Bot API, please see the manual.\n\nYou can control me by sending these commands:\n\n/newbot - create a new bot\n/mybots - edit your bots\n\nEdit Bots\n/setname - change a bot's name\n/setdescription - change bot description\n/setabouttext - change bot about info\n/setuserpic - change bot profile photo\n/setcommands - change the list of commands\n/deletebot - delete a bot\n\nBot Settings\n/token - get authorization token\n/revoke - revoke bot access token\n/setinline - toggle inline mode\n/setinlinegeo - toggle inline location requests\n/setinlinefeedback - change inline feedback settings\n/setjoingroups - can your bot be added to groups?\n/setprivacy - toggle privacy mode in groups\n\nWeb Apps\n/myapps - edit your web apps\n/newapp - create a new web app\n/listapps - get a list of your web apps\n/editapp - edit a web app\n/deleteapp - delete an existing web app\n\nGames\n/mygames - edit your games\n/newgame - create a new game\n/listgames - get a list of your games\n/editgame - edit a game\n/deletegame - delete an existing game"
     },
     {
       "step": 2,
+      "do": {
+        "send": "/mybots"
+      },
+      "expect": {
+        "contains": "Choose a bot from the list"
+      },
+      "pass": true,
+      "ms": 2507,
+      "text": "Choose a bot from the list below:"
+    },
+    {
+      "step": 3,
       "do": {
         "click": "@leadhunter_8602734479_bot"
       },
@@ -23,33 +35,20 @@
         "contains": "What do you want to do with the bot?"
       },
       "pass": true,
-      "ms": 2711,
+      "ms": 2696,
       "text": "Here it is: LeadHunter (8602734479) @leadhunter_8602734479_bot.\nWhat do you want to do with the bot?"
-    },
-    {
-      "step": 3,
-      "do": {
-        "click": "Edit Bot"
-      },
-      "expect": {
-        "regex": "Edit @\\w+_bot info"
-      },
-      "pass": true,
-      "ms": 2706,
-      "text": "Edit @leadhunter_8602734479_bot info.\n\nName: LeadHunter (8602734479)\nAbout: 🚫\nDescription: 🚫\nDescription picture: 🚫 no description picture\nBotpic: 🚫 no botpic\nCommands: no commands yet\nPrivacy Policy: 🚫"
     },
     {
       "step": 4,
       "do": {
-        "click": "Нет Такой Кнопки"
+        "click": "« Back to Bot List"
       },
       "expect": {
-        "contains": "этот шаг намеренно падает"
+        "contains": "Choose a bot from the list"
       },
-      "pass": false,
-      "ms": 1,
-      "text": "",
-      "error": "RuntimeError: кнопки «Нет Такой Кнопки» нет под последним сообщением бота"
+      "pass": true,
+      "ms": 2701,
+      "text": "Choose a bot from the list below:"
     }
   ]
 }
