@@ -1,0 +1,6 @@
+[
+  {"do": {"send": "/mybots"}, "expect": {"contains": "Choose a bot from the list below"}},
+  {"do": {"click": "@leadhunter_8602734479_bot"}, "expect": {"contains": "What do you want to do with the bot?"}},
+  {"do": {"click": "Edit Bot"}, "expect": {"regex": "Edit @\\w+_bot info"}},
+  {"do": {"click": "Нет Такой Кнопки"}, "expect": {"contains": "этот шаг намеренно падает"}}
+]

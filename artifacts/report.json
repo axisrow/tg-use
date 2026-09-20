@@ -1,0 +1,55 @@
+{
+  "scenario": "/Users/axisrow/.ao/data/worktrees/tg-use/tg-use-4/artifacts/mybots.scenario.json",
+  "pass": false,
+  "steps": [
+    {
+      "step": 1,
+      "do": {
+        "send": "/mybots"
+      },
+      "expect": {
+        "contains": "Choose a bot from the list below"
+      },
+      "pass": true,
+      "ms": 2509,
+      "text": "Choose a bot from the list below:"
+    },
+    {
+      "step": 2,
+      "do": {
+        "click": "@leadhunter_8602734479_bot"
+      },
+      "expect": {
+        "contains": "What do you want to do with the bot?"
+      },
+      "pass": true,
+      "ms": 2697,
+      "text": "Here it is: LeadHunter (8602734479) @leadhunter_8602734479_bot.\nWhat do you want to do with the bot?"
+    },
+    {
+      "step": 3,
+      "do": {
+        "click": "Edit Bot"
+      },
+      "expect": {
+        "regex": "Edit @\\w+_bot info"
+      },
+      "pass": true,
+      "ms": 2695,
+      "text": "Edit @leadhunter_8602734479_bot info.\n\nName: LeadHunter (8602734479)\nAbout: 🚫\nDescription: 🚫\nDescription picture: 🚫 no description picture\nBotpic: 🚫 no botpic\nCommands: no commands yet\nPrivacy Policy: 🚫"
+    },
+    {
+      "step": 4,
+      "do": {
+        "click": "Нет Такой Кнопки"
+      },
+      "expect": {
+        "contains": "этот шаг намеренно падает"
+      },
+      "pass": false,
+      "ms": 1,
+      "text": "",
+      "error": "RuntimeError: кнопки «Нет Такой Кнопки» нет под последним сообщением бота"
+    }
+  ]
+}
