@@ -1,0 +1,185 @@
+{
+  "states": [
+    {
+      "id": "7b5c2e5e",
+      "text": "Choose a bot from the list below:",
+      "buttons": [
+        "@leadhunter_8602734479_bot"
+      ]
+    },
+    {
+      "id": "b11800b2",
+      "text": "Here it is: LeadHunter (8602734479) @leadhunter_8602734479_bot.\nWhat do you want to do with the bot?",
+      "buttons": [
+        "API Token",
+        "Edit Bot",
+        "Bot Settings",
+        "Payments",
+        "Transfer Ownership",
+        "Delete Bot",
+        "« Back to Bot List"
+      ]
+    },
+    {
+      "id": "8b6d1e0d",
+      "text": "Here is the token for bot LeadHunter (8602734479) @leadhunter_8602734479_bot:\n\n[REDACTED]",
+      "buttons": [
+        "Revoke current token",
+        "« Back to Bot"
+      ]
+    },
+    {
+      "id": "8494ab00",
+      "text": "Edit @leadhunter_8602734479_bot info.\n\nName: LeadHunter (8602734479)\nAbout: 🚫\nDescription: 🚫\nDescription picture: 🚫 no description picture\nBotpic: 🚫 no botpic\nCommands: no commands yet\nPrivacy Policy: 🚫",
+      "buttons": [
+        "Edit Name",
+        "Edit About",
+        "Edit Description",
+        "Edit Description Picture",
+        "Edit Botpic",
+        "Edit Commands",
+        "Edit Privacy Policy",
+        "« Back to Bot"
+      ]
+    },
+    {
+      "id": "64145c11",
+      "text": "Settings for @leadhunter_8602734479_bot.",
+      "buttons": [
+        "Inline Mode",
+        "Secretary Mode",
+        "Allow Groups?",
+        "Group Privacy",
+        "Group Admin Rights",
+        "Channel Admin Rights",
+        "Payments",
+        "Domain",
+        "Menu Button",
+        "Configure Mini App",
+        "Paid Broadcast",
+        "« Back to Bot"
+      ]
+    },
+    {
+      "id": "bb02a8da",
+      "text": "Payment providers for LeadHunter (8602734479) @leadhunter_8602734479_bot.\n\nNo payment methods connected. Use the buttons below to add a new integration.",
+      "buttons": [
+        "🇳🇱 ECOMMPAY »",
+        "🇳🇱 Redsys »",
+        "Portmone »",
+        "Paycom.Uz »",
+        "Global Pay Uzbekistan »",
+        "FreedomPay UZ »",
+        "»",
+        "« Back to Bot"
+      ]
+    },
+    {
+      "id": "9cecad75",
+      "text": "OK. Send me the new name for your bot.",
+      "buttons": []
+    },
+    {
+      "id": "518b3b96",
+      "text": "OK. Send me the new 'About' text. People will see this text on the bot's profile page and it will be sent together with a link to your bot when they share it with someone.",
+      "buttons": []
+    },
+    {
+      "id": "72386729",
+      "text": "OK. Send me the new description for the bot. People will see this description when they open a chat with your bot, in a block titled 'What can this bot do?'.",
+      "buttons": []
+    },
+    {
+      "id": "75d7f905",
+      "text": "OK. Please upload a description photo for the bot, 640x360 pixels. Or a GIF, 320x180, 640x360 or 960x540 pixels. People will see this photo or GIF when they open a chat with your bot, in a block titled 'What can this bot do?'. Use /empty to remove the current picture.",
+      "buttons": []
+    },
+    {
+      "id": "7aaa921b",
+      "text": "OK. Send me the new profile photo for the bot.",
+      "buttons": []
+    },
+    {
+      "id": "a1937083",
+      "text": "OK. Send me a list of commands for your bot. Please use this format:\n\ncommand1 - Description\ncommand2 - Another description\n\nSend /empty to keep the list empty.",
+      "buttons": []
+    },
+    {
+      "id": "fa985b3e",
+      "text": "Send me a public URL to the new Privacy Policy for the bot or use /empty to remove the current one.\n\nIf you don't specify a Privacy Policy, the Standard Privacy Policy for Bots and Mini Apps will apply.",
+      "buttons": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "7b5c2e5e",
+      "to": "b11800b2",
+      "button": "@leadhunter_8602734479_bot"
+    },
+    {
+      "from": "b11800b2",
+      "to": "8b6d1e0d",
+      "button": "API Token"
+    },
+    {
+      "from": "b11800b2",
+      "to": "8494ab00",
+      "button": "Edit Bot"
+    },
+    {
+      "from": "b11800b2",
+      "to": "64145c11",
+      "button": "Bot Settings"
+    },
+    {
+      "from": "b11800b2",
+      "to": "bb02a8da",
+      "button": "Payments"
+    },
+    {
+      "from": "b11800b2",
+      "to": "7b5c2e5e",
+      "button": "« Back to Bot List"
+    },
+    {
+      "from": "8b6d1e0d",
+      "to": "b11800b2",
+      "button": "« Back to Bot"
+    },
+    {
+      "from": "8494ab00",
+      "to": "9cecad75",
+      "button": "Edit Name"
+    },
+    {
+      "from": "8494ab00",
+      "to": "518b3b96",
+      "button": "Edit About"
+    },
+    {
+      "from": "8494ab00",
+      "to": "72386729",
+      "button": "Edit Description"
+    },
+    {
+      "from": "8494ab00",
+      "to": "75d7f905",
+      "button": "Edit Description Picture"
+    },
+    {
+      "from": "8494ab00",
+      "to": "7aaa921b",
+      "button": "Edit Botpic"
+    },
+    {
+      "from": "8494ab00",
+      "to": "a1937083",
+      "button": "Edit Commands"
+    },
+    {
+      "from": "8494ab00",
+      "to": "fa985b3e",
+      "button": "Edit Privacy Policy"
+    }
+  ]
+}
