@@ -33,6 +33,7 @@ CDP_FILE = os.path.expanduser('~/.tg-use-cdp')  # login пишет сюда ад
 ART = 'artifacts'  # артефакты: flow.json, flow.md, report.json
 POLL = 2.5    # темп 2–3 c между действиями в чате
 WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
+OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
 DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
              'yes', 'да,', 'turn on', 'turn off', 'enable', 'disable',
              'включ', 'выключ')  # деструктив, подтверждения и переключатели настроек бота
@@ -207,25 +208,40 @@ async def cmd_login() -> None:
     print(f'Сессия сохранена в {PROFILE}; следующий запуск подхватит её без QR.')
 
 
+# guard по location.hash: webk пишет туда peerId открытого чата (#8602734479),
+# а .chat-info показывает display name — с username не совпадает (BotFather — редкое совпадение)
 JS_OPEN_INFO = '''() => {
   const el = document.querySelector('.chat-info');  // верхняя плашка открытого чата
-  return {title: el ? el.innerText.trim().split('\\n')[0] : '',
+  return {hash: location.hash,
+          title: el ? el.innerText.trim().split('\\n')[0] : '',
           bodyLen: document.body ? document.body.innerText.length : 0};  // 0 = не смонтирован
 }'''
 
-# клик по чату бота в списке чатов (хэш при старте webk надёжно не читает)
-JS_OPEN_CHAT = '''(name) => {
-  const needle = name.toLowerCase();
-  const items = [...document.querySelectorAll('a[href^="#"], [class*="chat-item"]')]
-    .filter(e => e.offsetParent !== null && e.innerText);
-  const el = items.find(e => e.innerText.toLowerCase().includes(needle));
-  if (!el) return false;
-  el.scrollIntoView({block: 'center'});
-  el.click();
-  return true;
+# локальный поиск tweb индексирует диалоги вместе с username (getUserSearchText) —
+# единственный путь username → чат: hash-роутинг webk перехватывает hash-навигации,
+# глобального резолва без Enter нет. Ищем username, кликаем первый результат группы.
+JS_OPEN_SEARCH = '''(query) => {
+  const input = document.querySelector('.input-search-input');
+  if (!input) return 0;
+  input.focus();
+  input.value = '';  // без очистки старый запрос глушит новый ввод
+  document.execCommand('insertText', false, query);
+  return 1;
 }'''
 
-JS_SET_HASH = '''(name) => { location.hash = "#@" + name; }'''
+# результат поисковой группы, чей текст содержит @username (подзаголовок результата):
+# клик и его peer-id; '' если ещё не отрендерилось. Полный набор mousedown/mouseup/click —
+# голый el.click() tweb-строку не открывает
+JS_CLICK_FOUND = '''(needle) => {
+  const el = [...document.querySelectorAll('.search-group .chatlist-chat')]
+    .find(e => e.offsetParent !== null && (e.innerText || '').toLowerCase().includes(needle));
+  if (!el) return '';
+  const peer = el.getAttribute('data-peer-id') || (el.getAttribute('href') || '').slice(1);
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    el.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+  }
+  return peer;
+}'''
 
 
 def kill_webk_workers(base: str) -> int:
@@ -233,27 +249,32 @@ def kill_webk_workers(base: str) -> int:
     Их залипание = вечная загрузка вкладки; /json — единственная дверь к worker-таргетам.
     ponytail: причина залипания не выяснена; если webk починят — просто удалить вызов."""
     import urllib.request
-    with urllib.request.urlopen(base + '/json/list', timeout=5) as r:
-        targets = json.load(r)
-    ids = [t['id'] for t in targets
-           if t.get('type') == 'shared_worker' and 'web.telegram.org' in t.get('url', '')]
-    for i in ids:
-        urllib.request.urlopen(f'{base}/json/close/{i}', timeout=5).read()
+    try:
+        with urllib.request.urlopen(base + '/json/list', timeout=5) as r:
+            targets = json.load(r)
+        ids = [t['id'] for t in targets
+               if t.get('type') == 'shared_worker' and 'web.telegram.org' in t.get('url', '')]
+        for i in ids:
+            urllib.request.urlopen(f'{base}/json/close/{i}', timeout=5).read()
+    except Exception as e:  # браузер висит — CDP HTTP может не ответить: чистый выход без traceback
+        raise SystemExit(f'не удалось убить воркеры webk через {base} ({type(e).__name__}: {e}); '
+                         f'ничего не отправлено')
     return len(ids)
 
 
-async def wait_open(page, tries: int) -> dict:
-    """Заголовок открытого чата + смонтированность UI; проба до паузы (DOM-опрос — не темп)."""
+async def wait_open(page, tries: int, want: str = '') -> dict:
+    """Смонтированность UI; при want — ждать hash, равный want (чат открыт), проба до паузы."""
+    st = {}
     for _ in range(tries):
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
-        if st['title'] or st['bodyLen']:
+        if st['bodyLen'] and (not want or st['hash'].lower() == want.lower()):
             return st
-        await asyncio.sleep(2)
-    return {'title': '', 'bodyLen': 0}
+        await asyncio.sleep(OPEN_POLL)
+    return st or {'hash': '', 'title': '', 'bodyLen': 0}
 
 
 async def cmd_open(bot: str) -> None:
-    """Открыть чат бота в живом браузере: reload/переход + клик по чату; guard по заголовку; без отправок."""
+    """Открыть чат бота в живом браузере: hash-роутинг webk (#@username) + guard «webk съел хэш»; без отправок."""
     name = bot.lstrip('@')
     if not re.fullmatch(r'[A-Za-z0-9_]{4,64}', name):  # формат для UX; в JS имя идёт параметром
         raise SystemExit(f'{bot!r}: жду username вида @name (латиница, цифры, _)')
@@ -261,13 +282,9 @@ async def cmd_open(bot: str) -> None:
     try:
         page = await browser.must_get_current_page()
         url = await page.evaluate('() => location.href')
-        if url.startswith(TG_URL):
-            # reload библиотечный (CDP Page.reload): evaluate-location.reload() залипшую страницу не поднимает
-            await page.evaluate(JS_SET_HASH, name)
-            await page.reload()
-        else:
+        if not url.startswith(TG_URL):
             # пустая/чужая вкладка: полный переход, руками ничего не набираем
-            await page.goto(f'{TG_URL}#@{name}')
+            await page.goto(TG_URL)
         st = await wait_open(page, 15)  # медленный старт — норма: до ~30 c
         if not st['bodyLen']:
             # воркеры webk залипли (вечная загрузка): kill + reload ФРЕШ-сессией — сессия,
@@ -282,17 +299,28 @@ async def cmd_open(bot: str) -> None:
             if not st['bodyLen']:
                 raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии; '
                                  f'ничего не отправлено')
-        if name.lower() not in st['title'].lower():
-            # приложение живо, но чат не открыт — клик по чату в списке
-            if json.loads(await page.evaluate(JS_OPEN_CHAT, name)):
-                st = await wait_open(page, 8)
-            else:
-                st['title'] = ''
+        # tweb индексирует диалоги вместе с username (getUserSearchText): локальный поиск —
+        # единственный путь username → чат; результат даёт data-peer-id для верификации
+        if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
+            raise SystemExit('нет поля поиска webk; ничего не отправлено')
+        peer = ''
+        for _ in range(10):  # ~20 c: индекс/рендер результатов
+            peer = (await page.evaluate(JS_CLICK_FOUND, '@' + name.lower())) or ''
+            if peer:
+                break
+            await asyncio.sleep(OPEN_POLL)
+        if not peer:
+            raise SystemExit(f'чат {bot} не найден в диалогах webk (поиск по username); '
+                             f'ничего не отправлено')
+        st = await wait_open(page, 10, want='#' + peer)  # tweb перепишет hash на #peer
+        await asyncio.sleep(OPEN_POLL)  # дать плашке чата устаканиться после закрытия поиска
+        st = json.loads(await page.evaluate(JS_OPEN_INFO))
     finally:
         await browser.stop()
-    if name.lower() not in st['title'].lower():
-        raise SystemExit(f'чат {bot} не открылся (заголовок: {st["title"] or "пусто"}); ничего не отправлено')
-    print(json.dumps({'opened': bot, 'title': st['title']}, ensure_ascii=False))
+    if not (st['bodyLen'] and st['hash'].lower() in ('#' + peer.lower(), '#@' + name.lower())):
+        raise SystemExit(f'чат {bot} не открылся (hash: {st["hash"] or "пусто"}, '
+                         f'заголовок: {st["title"] or "пусто"}); ничего не отправлено')
+    print(json.dumps({'opened': bot, 'title': st['title'], 'hash': st['hash']}, ensure_ascii=False))
 
 
 async def cmd_state() -> None:
@@ -389,7 +417,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog='tg-use', description='Руки для харнеса: Telegram-боты через web.telegram.org')
     sub = parser.add_subparsers(dest='cmd', required=True)
     sub.add_parser('login', help='headed-браузер с persistent-профилем (QR сканирует человек)')
-    p_open = sub.add_parser('open', help='открыть чат бота: deep-link + reload, guard по заголовку, без отправок')
+    p_open = sub.add_parser('open', help='открыть чат бота: поиск webk по username + клик, guard по peer-id hash, без отправок')
     p_open.add_argument('bot', help='бот в форме @name')
     sub.add_parser('state', help='JSON: последнее сообщение бота + подписи кнопок')
     p_click = sub.add_parser('click', help='нажать inline-кнопку по подписи (пустая реакция = ошибка ребра)')
