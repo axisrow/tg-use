@@ -1,32 +1,70 @@
-"""tg-use — тестировщик/копировщик Telegram-ботов через web.telegram.org (клиент /k/).
+"""tg-use — руки для агент-харнеса: тестировщик Telegram-ботов через web.telegram.org (клиент /k/).
 
-Единственная runtime-зависимость — browser-use: навигация, ожидания и чтение DOM
-живут внутри него. Наш код — только CLI, конфиг Browser/LLM и функции скелета.
+В CLI нет ни одного обращения к внешней модели: мозг — модель харнеса, который
+запускает этот CLI (README: два режима browser-use; наш — Browser Harness CLI +
+скилл). browser-use используется как библиотека браузера (BrowserSession):
+навигация, ожидания и клики — его зона. Встроенный агент со своим циклом не
+используется — обход и выбор следующего шага делает харнес (см. SKILL.md).
 
-Безопасность: темп 2–3 c между действиями; только диалоги с ботами, ни одного
-сообщения живым людям; ~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
+Безопасность: темп 2–3 c между действиями задаёт харнес между вызовами CLI;
+только диалоги с ботами; deny-лист мутационных кнопок; скраб токенов в каждом
+выводе; ~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
 """
+
+import os
+
+os.environ.setdefault('BROWSER_USE_LOGGING_LEVEL', 'warning')  # до импорта: чистый CLI-вывод
 
 import argparse
 import asyncio
 import hashlib
 import json
-import os
+import logging
 import re
-import shutil
-from collections import deque
+import time
 
-from browser_use import Agent
 from browser_use.browser import BrowserSession
-from browser_use.llm import ChatAnthropic, ChatOpenAI
+
+logging.getLogger('browser_use').setLevel(logging.WARNING)  # event-логи библиотеки — не наш вывод
 
 TG_URL = 'https://web.telegram.org/k/'
 PROFILE = os.path.expanduser('~/.tg-use-agent-profile')  # = пароль: полный доступ к аккаунту
-MAX_DEPTH = 4    # потолок BFS по глубине
-MAX_STATES = 50  # потолок BFS по числу состояний
+CDP_FILE = os.path.expanduser('~/.tg-use-cdp')  # login пишет сюда адрес живого браузера
+ART = 'artifacts'  # артефакты: flow.json, flow.md, report.json
+POLL = 2.5    # темп 2–3 c между действиями в чате
+WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
 DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
              'yes', 'да,', 'turn on', 'turn off', 'enable', 'disable',
              'включ', 'выключ')  # деструктив, подтверждения и переключатели настроек бота
+
+JS_STATE = '''() => {
+  const bubbles = [...document.querySelectorAll('.bubble.is-in')];
+  const last = bubbles[bubbles.length - 1];
+  if (!last) return {text: '', buttons: []};
+  const t = last.querySelector('.translatable-message') || last.querySelector('.message');
+  const buttons = [...last.querySelectorAll('button.reply-markup-button')]
+    .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
+  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length};
+}'''
+
+# индекс кнопки по подписи среди всех кнопок документа (для get_elements_by_css_selector)
+JS_FIND_BUTTON = '''(label) => {
+  const all = [...document.querySelectorAll('button.reply-markup-button')];
+  const bubbles = [...document.querySelectorAll('.bubble.is-in')];
+  const last = bubbles[bubbles.length - 1];
+  const btn = last && [...last.querySelectorAll('button.reply-markup-button')]
+    .find(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim() === label);
+  if (!btn) return -1;
+  btn.scrollIntoView({block: 'center'});
+  return all.indexOf(btn);
+}'''
+
+JS_TYPE = '''(text) => {
+  const field = document.querySelector('.input-message-input');
+  if (!field) return 'no-field';
+  field.focus();
+  return 'typed:' + String(document.execCommand('insertText', false, text));
+}'''
 
 
 def is_dangerous(label: str) -> bool:
@@ -34,7 +72,7 @@ def is_dangerous(label: str) -> bool:
 
 
 def scrub(text: str) -> str:
-    """Затереть секреты (токены ботов вида 1234567890:AA...) перед записью в артефакты."""
+    """Затереть секреты (токены ботов вида 1234567890:AA...) перед выводом/записью в артефакты."""
     # без хвостового \b: если токен кончается на -/_, границы слова нет и 1–2 символа остались бы видимыми
     return re.sub(r'\b\d{8,12}:[A-Za-z0-9_-]{30,}', '[REDACTED]', text)
 
@@ -44,218 +82,249 @@ def esc(s: str, limit: int = 40) -> str:
     return s.splitlines()[0][:limit].replace('"', "'") if s else '(нет текста)'
 
 
-def llm():
-    """LLM контура browser-use: любой OpenAI-совместимый endpoint (ключ и base_url в env), fallback — Anthropic."""
-    if os.environ.get('OPENAI_API_KEY'):
-        return ChatOpenAI(model=os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'))
-    # 240 c: glm-5.3 через прокси — reasoning-модель, тяжёлые шаги думают дольше дефолтных 90 c
-    return ChatAnthropic(model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'), timeout=240)
-
-
-async def ask(task: str, shot: str | None = None) -> str:
-    """Единственный мост к браузеру: один ask = один прогон агента browser-use.
-
-    shot — путь для скриншота страницы в момент конца прогона (делает browser-use).
-    """
-    browser = BrowserSession(user_data_dir=PROFILE, headless=False)
-    try:
-        # транспорт закреплён за клиентом /k/: агент каждый раз начинает с чистой вкладки
-        history = await Agent(
-            task=f'Открой {TG_URL} и затем: {task}', llm=llm(), browser=browser,
-            llm_timeout=240,  # reasoning-модели думают дольше дефолтных 60–90 c
-            # fallback из эпика: при ошибке основной модели (рвёт ~50% тяжёлых tool-use запросов) — ретрай другой
-            fallback_llm=ChatAnthropic(model=os.environ.get('ANTHROPIC_FALLBACK_MODEL', 'glm-4.6'), timeout=240),
-        ).run()
-        if shot:  # скриншот последнего шага: агент сам пишет PNG в свой tmp-каталог, дублируем к себе
-            try:
-                paths = [p for p in history.screenshot_paths() if p and os.path.exists(p)]
-                if paths:
-                    shutil.copyfile(paths[-1], shot)
-            except Exception:
-                pass  # скриншот — артефакт, не данные
-        return history.final_result() or ''
-    finally:
-        await browser.stop()  # иначе Chromium-процессы текут, а профиль залочен для следующих прогонов
-
-
-def parse_state(raw: str) -> dict:
-    """JSON из ответа LLM: срезать markdown-забор (```json или голый ```) при наличии."""
-    s = raw.strip().removesuffix('```')
-    if s.startswith('```'):
-        s = s.removeprefix('```json').removeprefix('```')
-    state = json.loads(s.strip())
-    return {'text': state.get('text', ''), 'buttons': state.get('buttons', [])}
-
-
-def where(bot: str | None) -> str:
-    return f' (чат с {bot}; если он не открыт — найди его в списке чатов и открой)' if bot else ''
-
-
-async def read_state(bot: str | None = None, shot: str | None = None) -> dict:
-    """JSON: текст последнего сообщения бота + подписи кнопок."""
-    raw = await ask(
-        f'Ты в чате Telegram{where(bot)}. Прочитай последнее сообщение ОТ БОТА (не своё) '
-        'и подписи всех inline-кнопок под ним. Верни ТОЛЬКО JSON без пояснений: '
-        '{"text": "<текст сообщения>", "buttons": ["<подпись>", ...]}',
-        shot=shot,
-    )
-    return parse_state(raw)
-
-
-async def click(label: str, bot: str | None = None) -> str:
-    result = await ask(
-        f'В чате Telegram{where(bot)} нажми inline-кнопку «{label}» '
-        'и дождись реакции бота (нового сообщения или смены клавиатуры).'
-    )
-    if not result.strip():  # abort агента = клик мог не случиться; тихо читать старое состояние нельзя
-        raise RuntimeError(f'клик «{label}» не подтверждён агентом (пустой ответ)')
-    return result
-
-
 def state_key(st: dict) -> str:
     """Ключ дедупа состояния: sha1(текст + отсортированные подписи кнопок)."""
     return hashlib.sha1((st['text'] + str(sorted(st['buttons']))).encode()).hexdigest()
 
 
-def write_artifacts(flow: dict) -> None:
-    """flow.json + flow.md (Mermaid); перезаписывается после каждого нового состояния,
-    чтобы прерванный прогон оставлял валидные артефакты."""
-    with open('flow.json', 'w') as f:
+def reaction_key(st: dict) -> str:
+    """Ключ для ожидания реакции: тот же ключ + число входящих сообщений,
+    чтобы повтор-дубль от бота (тот же текст) считался реакцией, а не тишиной."""
+    return hashlib.sha1((str(st.get('n', 0)) + st['text'] + str(sorted(st['buttons']))).encode()).hexdigest()
+
+
+def check_expect(text: str, expect: dict | None) -> tuple[bool, str]:
+    """Ожидания шага против текста последнего сообщения бота: contains и/или regex."""
+    for kind, pat in (expect or {}).items():
+        if kind not in ('contains', 'regex'):  # опечатка в сценарии = падение, не ложный PASS
+            return False, f'неизвестный expect: {kind!r} (умею contains/regex)'
+        if kind == 'contains' and pat not in text:
+            return False, f'в тексте нет «{pat}»'
+        if kind == 'regex' and not re.search(pat, text):
+            return False, f'в тексте нет /{pat}/'
+    return True, ''
+
+
+def write_artifacts(flow: dict, d: str = ART) -> None:
+    """flow.json + flow.md (Mermaid); перезаписывается целиком после каждого save."""
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, 'flow.json'), 'w') as f:
         json.dump(flow, f, ensure_ascii=False, indent=2)
     lines = ['flowchart TD']
     for st in flow['states']:
         lines.append(f'    {st["id"]}["{esc(st["text"])}"]')
     for e in flow['edges']:
         lines.append(f'    {e["from"]} -->|"{esc(e["button"], 25)}"| {e["to"]}')
-    with open('flow.md', 'w') as f:
+    with open(os.path.join(d, 'flow.md'), 'w') as f:
         f.write('# flow\n\n```mermaid\n' + '\n'.join(lines) + '\n```\n')
 
 
-async def cmd_crawl(bot: str, depth: int, start: str) -> None:
-    """BFS по меню бота: входная команда, затем обход inline-кнопок; возврат к состоянию — повтором пути."""
-    depth = min(depth, MAX_DEPTH)
-    os.makedirs('shots', exist_ok=True)
-    flow = {'states': [], 'edges': []}
-    paths = {}  # id -> [кнопки от /start до состояния]; ключ = признак «состояние уже открыто»
-    kids = {}   # id -> кнопки состояния
-    edges = set()
+async def connect() -> BrowserSession:
+    """Подключиться к браузеру, оставленному login (адрес в ~/.tg-use-cdp)."""
+    try:
+        cdp = open(CDP_FILE).read().strip()
+    except FileNotFoundError:
+        raise SystemExit('нет живого браузера: сначала python3 tg-use.py login')
+    browser = BrowserSession(cdp_url=cdp)
+    try:
+        await browser.start()
+    except Exception as e:
+        raise SystemExit(f'браузер {cdp} не отвечает ({type(e).__name__}: {e}); перезапусти login')
+    return browser
 
-    tainted = False  # после первого показа секрета скриншоты не снимаем: кадр — вся страница,
-    # сообщение с токеном остаётся во вьюпорте выше текущего состояния
 
-    async def goto(state_id: str, label: str) -> dict:
-        """Повтором пути от /start вернуться к state_id, нажать label, прочитать новое состояние."""
-        if os.path.exists('shots/_cur.png'):
-            os.remove('shots/_cur.png')  # протухший кадр не должен переименоваться под чужой id
-        for b in paths[state_id] + [label]:
-            await click(b, bot=bot)
-            await asyncio.sleep(2.5)  # темп 2–3 c между действиями в чате
-        return await read_state(bot=bot, shot=None if tainted else 'shots/_cur.png')
+async def read_state(page) -> dict:
+    """Текст последнего сообщения бота + подписи кнопок (из живого чата)."""
+    return json.loads(await page.evaluate(JS_STATE))
 
-    root = None
-    for attempt in range(3):  # вход под той же дисциплиной, что и рёбра: провайдер рвётся на любом ask
-        try:
-            await ask(f'Открой чат с {bot} в Telegram, отправь {start} и дождись ответа бота.')
-            await asyncio.sleep(2.5)  # темп 2–3 c между действиями в чате
-            root = await read_state(bot=bot, shot='shots/_cur.png')
-            break
-        except Exception as e:
-            print(f'вход {attempt + 1}/3 не удался: {type(e).__name__}: {e}', flush=True)
-    if root is None:
-        raise SystemExit('вход в чат не удался за 3 попытки')
-    root['text'] = scrub(root['text'])
-    if '[REDACTED]' in root['text']:
-        tainted = True
-    print(f'корень: {esc(root["text"], 70)} | кнопок: {len(root["buttons"])}', flush=True)
-    rid = state_key(root)[:8]
-    flow['states'].append({'id': rid, 'text': root['text'], 'buttons': root['buttons']})
-    if not tainted and os.path.exists('shots/_cur.png'):
-        os.replace('shots/_cur.png', f'shots/{rid}.png')
-    paths[rid], kids[rid] = [], root['buttons']
-    queue = deque([(rid, 0)])
-    fails = 0
-    while queue and len(flow['states']) < MAX_STATES:
-        sid, d = queue.popleft()
-        if d >= depth:
-            continue
-        for label in kids[sid]:
-            if len(flow['states']) >= MAX_STATES:
-                break
-            if is_dangerous(label):
-                print(f'⛔ «{label}» — опасная кнопка, не нажимаю', flush=True)
-                continue
-            try:
-                st = await goto(sid, label)
-            except Exception as e:
-                fails += 1
-                print(f'пропуск «{label}» из {sid}: {type(e).__name__}: {e}', flush=True)
-                if fails >= 3:
-                    raise SystemExit('3 сбоя подряд — стоп; частичные артефакты уже записаны')
-                continue
-            fails = 0
-            st['text'] = scrub(st['text'])
-            if '[REDACTED]' in st['text']:
-                tainted = True  # дальше кадры этой страницы содержат секрет — скриншоты больше не сохраняем
-            tid = state_key(st)[:8]
-            if tid not in paths:  # новое состояние
-                flow['states'].append({'id': tid, 'text': st['text'], 'buttons': st['buttons']})
-                paths[tid], kids[tid] = paths[sid] + [label], st['buttons']
-                queue.append((tid, d + 1))
-                if not tainted and os.path.exists('shots/_cur.png'):
-                    os.replace('shots/_cur.png', f'shots/{tid}.png')
-            if (sid, tid, label) not in edges:
-                edges.add((sid, tid, label))
-                flow['edges'].append({'from': sid, 'to': tid, 'button': label})
-            write_artifacts(flow)
-            print(f'+{tid}: {esc(st["text"], 60)} | кнопок: {len(st["buttons"])}', flush=True)
-    write_artifacts(flow)
-    print(f'готово: состояний {len(flow["states"])}, рёбер {len(flow["edges"])} → flow.json, flow.md, shots/', flush=True)
+
+async def wait_reaction(page, before_key: str) -> dict:
+    """Опрашивать состояние, пока бот не среагирует; тишина — ошибка ребра."""
+    deadline = time.monotonic() + WAIT
+    while True:
+        await asyncio.sleep(POLL)
+        st = await read_state(page)
+        if reaction_key(st) != before_key:
+            return st
+        if time.monotonic() > deadline:
+            raise RuntimeError('реакции бота не последовало (состояние не изменилось)')
+
+
+async def do_click(page, label: str) -> dict:
+    """Нажать кнопку по подписи и вернуть новое состояние; отказ по deny-листу и промаху."""
+    if is_dangerous(label):
+        raise RuntimeError(f'«{label}» — опасная кнопка, CLI её не нажимает (deny-лист)')
+    before = await read_state(page)
+    idx = json.loads(await page.evaluate(JS_FIND_BUTTON, label))
+    if idx < 0:
+        raise RuntimeError(f'кнопки «{label}» нет под последним сообщением бота')
+    button = (await page.get_elements_by_css_selector('button.reply-markup-button'))[idx]
+    await button.click()
+    return await wait_reaction(page, reaction_key(before))
+
+
+async def do_send(page, text: str) -> dict:
+    """Отправить команду в поле ввода и вернуть новое состояние."""
+    # ponytail: только команды на / — предохранитель от сообщений живым людям; убрать, если боту нужен текст
+    if not text.startswith('/'):
+        raise RuntimeError('send: только команды на /')
+    before = await read_state(page)
+    typed = await page.evaluate(JS_TYPE, text)
+    if typed != 'typed:true':
+        raise RuntimeError(f'не удалось ввести «{text}» (поле ввода: {typed or "нет ответа"})')
+    await page.press('Enter')
+    return await wait_reaction(page, reaction_key(before))
+
+
+def shown(st: dict) -> dict:
+    """Состояние для вывода/артефактов: скраб токенов + короткий id."""
+    st = dict(st, text=scrub(st['text']))
+    return dict(st, id=state_key(st)[:8])
 
 
 async def cmd_login() -> None:
-    """Headed-логин; QR сканирует человек, сессия живёт в ~/.tg-use-agent-profile."""
+    """Headed-браузер с persistent-профилем; адрес живого браузера — в ~/.tg-use-cdp."""
     browser = BrowserSession(user_data_dir=PROFILE, headless=False)
     await browser.start()
-    await (await browser.must_get_current_page()).goto(TG_URL)
     try:
-        input(
-            'Открылось окно Telegram: если QR — отсканируй его телефоном '
-            '(Telegram → Настройки → Устройства → Привязать устройство); '
-            'если список чатов — сессия уже живая. Enter, когда готово. '
-        )
-    except EOFError:  # запущено без tty: окно держится открытым до остановки процесса
-        print('stdin закрыт: окно держится открытым; останови процесс (Ctrl+C/kill), когда закончишь.')
-        await asyncio.Event().wait()  # держать браузер открытым до kill/Ctrl+C
+        page = await browser.must_get_current_page()
+        await page.goto(TG_URL)
+        with open(CDP_FILE, 'w') as f:
+            f.write(browser.cdp_url)
+        print(f'браузер {browser.cdp_url} — адрес записан в {CDP_FILE}; окно не закрывать до конца работы.')
+        try:
+            input(
+                'Если QR — отсканируй телефоном (Telegram → Настройки → Устройства → '
+                'Привязать устройство); если список чатов — сессия уже живая. Enter, когда закончишь. '
+            )
+        except EOFError:  # запущено без tty: окно держится открытым до остановки процесса
+            print('stdin закрыт: окно держится открытым; останови процесс (Ctrl+C/kill), когда закончишь.')
+            await asyncio.Event().wait()
     finally:
         await browser.stop()
+        if os.path.exists(CDP_FILE):
+            os.remove(CDP_FILE)
     print(f'Сессия сохранена в {PROFILE}; следующий запуск подхватит её без QR.')
 
 
+async def cmd_state() -> None:
+    browser = await connect()
+    try:
+        print(json.dumps(shown(await read_state(await browser.must_get_current_page())),
+                         ensure_ascii=False, indent=2))
+    finally:
+        await browser.stop()
+
+
+async def cmd_click(label: str) -> None:
+    browser = await connect()
+    try:
+        page = await browser.must_get_current_page()
+        st = shown(await do_click(page, label))
+        print(f'клик «{label}» →', flush=True)
+        print(json.dumps(st, ensure_ascii=False, indent=2))
+    finally:
+        await browser.stop()
+
+
+async def cmd_save(from_id: str, button: str, bot: str) -> None:
+    """Дописать текущее состояние (и ребро from --button, если задано) в flow.json/flow.md."""
+    if button and not from_id:  # иначе кнопка потерялась бы молча
+        raise SystemExit('--button без --from: ребро некуда прикрепить')
+    try:
+        flow = json.load(open(os.path.join(ART, 'flow.json')))
+    except FileNotFoundError:
+        flow = {'bot': bot, 'states': [], 'edges': []}
+    if from_id and from_id[:8] not in {s['id'] for s in flow['states']}:
+        # опечатка в id = висячее ребро и битая ссылка в Mermaid; проверяем до подключения к браузеру
+        raise SystemExit(f'--from {from_id[:8]}: нет такого состояния в {ART}/flow.json')
+    browser = await connect()
+    try:
+        page = await browser.must_get_current_page()
+        st = shown(await read_state(page))
+    finally:
+        await browser.stop()
+    new = st['id'] not in {s['id'] for s in flow['states']}
+    if new:
+        flow['states'].append({k: st[k] for k in ('id', 'text', 'buttons')})
+    if from_id:
+        edge = {'from': from_id[:8], 'to': st['id'], 'button': button}
+        if edge not in flow['edges']:
+            flow['edges'].append(edge)
+    write_artifacts(flow)
+    print(json.dumps({'id': st['id'], 'new': new, 'states': len(flow['states']),
+                      'edges': len(flow['edges'])}, ensure_ascii=False))
+
+
+async def cmd_test(scenario_path: str) -> None:
+    """Прогнать сценарий [{do, expect}] → artifacts/report.json; падение = exit 1."""
+    steps = json.load(open(scenario_path))
+    browser = await connect()
+    page = await browser.must_get_current_page()
+    results = []
+    try:
+        for i, step in enumerate(steps):
+            do = step.get('do', {})
+            t0 = time.monotonic()
+            error = ''
+            try:
+                if 'click' in do:
+                    st = shown(await do_click(page, do['click']))
+                elif 'send' in do:
+                    st = shown(await do_send(page, do['send']))
+                elif not do:
+                    st = shown(await read_state(page))
+                else:
+                    raise RuntimeError(f'неизвестный шаг {json.dumps(do)}: жду {{"click"}} или {{"send"}}')
+                ok, why = check_expect(st['text'], step.get('expect'))
+            except Exception as e:
+                ok, st, why = False, {'text': '', 'buttons': []}, f'{type(e).__name__}: {e}'
+            results.append({'step': i + 1, 'do': do, 'expect': step.get('expect'),
+                            'pass': ok, 'ms': round((time.monotonic() - t0) * 1000),
+                            'text': st['text'], **({'error': why} if why else {})})
+            print(f'шаг {i + 1}: {"ok" if ok else "FAIL"} {why}', flush=True)
+            if not ok:
+                break  # дальше сценарий бессмыслен: хрупкие шаги после сломанного врут
+    finally:
+        await browser.stop()
+    passed = all(r['pass'] for r in results)
+    os.makedirs(ART, exist_ok=True)
+    with open(os.path.join(ART, 'report.json'), 'w') as f:
+        json.dump({'scenario': os.path.basename(scenario_path), 'pass': passed, 'steps': results},
+                  f, ensure_ascii=False, indent=2)
+    print(f'итог: {"PASS" if passed else "FAIL"} ({len(results)} шагов) → {ART}/report.json')
+    if not passed:
+        raise SystemExit(1)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(prog='tg-use', description='Тестировщик Telegram-ботов через web.telegram.org')
+    parser = argparse.ArgumentParser(prog='tg-use', description='Руки для харнеса: Telegram-боты через web.telegram.org')
     sub = parser.add_subparsers(dest='cmd', required=True)
-    sub.add_parser('login', help='headed-логин web.telegram.org (QR сканирует человек)')
-    p_ask = sub.add_parser('ask', help='одна задача агенту browser-use')
-    p_ask.add_argument('task')
-    sub.add_parser('read', help='состояние текущего чата как JSON')
-    p_click = sub.add_parser('click', help='нажать inline-кнопку по подписи')
+    sub.add_parser('login', help='headed-браузер с persistent-профилем (QR сканирует человек)')
+    sub.add_parser('state', help='JSON: последнее сообщение бота + подписи кнопок')
+    p_click = sub.add_parser('click', help='нажать inline-кнопку по подписи (пустая реакция = ошибка ребра)')
     p_click.add_argument('label')
-    p_crawl = sub.add_parser('crawl', help='BFS по меню бота → flow.json + flow.md + shots/')
-    p_crawl.add_argument('bot', help='например @botfather')
-    p_crawl.add_argument('--depth', type=int, default=MAX_DEPTH, help='глубина обхода (потолок 4)')
-    p_crawl.add_argument('--start', default='/start', help='входная команда; для ботов без кнопок после /start — другая, напр. /mybots')
+    p_save = sub.add_parser('save', help='дописать состояние/ребро в artifacts/flow.json + flow.md')
+    p_save.add_argument('--from', dest='from_id', default='', help='id состояния, из которого вышло ребро')
+    p_save.add_argument('--button', default='', help='подпись кнопки ребра')
+    p_save.add_argument('--bot', default='', help='имя бота (только для первого save)')
+    p_test = sub.add_parser('test', help='прогнать сценарий → artifacts/report.json (fail = exit 1)')
+    p_test.add_argument('scenario', help='JSON: [{"do": {"click"/"send": ...}, "expect": {"contains"/"regex": ...}}]')
     args = parser.parse_args()
 
-    if args.cmd == 'login':
-        asyncio.run(cmd_login())
-    elif args.cmd == 'ask':
-        print(asyncio.run(ask(args.task)))
-    elif args.cmd == 'read':
-        print(json.dumps(asyncio.run(read_state()), ensure_ascii=False, indent=2))
-    elif args.cmd == 'click':
-        print(asyncio.run(click(args.label)))
-    elif args.cmd == 'crawl':
-        asyncio.run(cmd_crawl(args.bot, args.depth, args.start))
+    try:
+        if args.cmd == 'login':
+            asyncio.run(cmd_login())
+        elif args.cmd == 'state':
+            asyncio.run(cmd_state())
+        elif args.cmd == 'click':
+            asyncio.run(cmd_click(args.label))
+        elif args.cmd == 'save':
+            asyncio.run(cmd_save(args.from_id, args.button, args.bot))
+        elif args.cmd == 'test':
+            asyncio.run(cmd_test(args.scenario))
+    except RuntimeError as e:  # ошибка руки (deny-лист, промах кнопки, нет реакции) — не traceback
+        raise SystemExit(f'ошибка: {e}')
 
 
 if __name__ == '__main__':

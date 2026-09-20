@@ -28,7 +28,7 @@ os.chdir(tempfile.mkdtemp())
 flow = {'states': [{'id': 'a1b2c3d4', 'text': 'Меню', 'buttons': ['Bots']}],
         'edges': [{'from': 'a1b2c3d4', 'to': 'e5f6a7b8', 'button': 'Bots'}]}
 write_artifacts(flow)
-assert json.load(open('flow.json')) == flow
-md = open('flow.md').read()
+assert json.load(open('artifacts/flow.json')) == flow
+md = open('artifacts/flow.md').read()
 assert 'a1b2c3d4["Меню"]' in md and 'a1b2c3d4 -->|"Bots"| e5f6a7b8' in md and md.count('```mermaid') == 1
 print('ok: state_key / esc / write_artifacts')
