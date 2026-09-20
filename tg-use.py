@@ -262,12 +262,13 @@ def kill_webk_workers(base: str) -> int:
     return len(ids)
 
 
-async def wait_open(page, tries: int, want: str = '') -> dict:
-    """Смонтированность UI; при want — ждать hash, равный want (чат открыт), проба до паузы."""
+async def wait_open(page, tries: int, want: str | tuple = ()) -> dict:
+    """Смонтированность UI; при want (str/кортеж) — ждать hash из want (чат открыт)."""
+    wants = tuple(w.lower() for w in ((want,) if isinstance(want, str) else want))
     st = {}
     for _ in range(tries):
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
-        if st['bodyLen'] and (not want or st['hash'].lower() == want.lower()):
+        if st['bodyLen'] and (not wants or st['hash'].lower() in wants):
             return st
         await asyncio.sleep(OPEN_POLL)
     return st or {'hash': '', 'title': '', 'bodyLen': 0}
@@ -312,7 +313,8 @@ async def cmd_open(bot: str) -> None:
         if not peer:
             raise SystemExit(f'чат {bot} не найден в диалогах webk (поиск по username); '
                              f'ничего не отправлено')
-        st = await wait_open(page, 10, want='#' + peer)  # tweb перепишет hash на #peer
+        # tweb переписывает hash на #peerId или #@username — ждём любой из двух
+        st = await wait_open(page, 10, want=('#' + peer, '#@' + name.lower()))
         await asyncio.sleep(OPEN_POLL)  # дать плашке чата устаканиться после закрытия поиска
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
     finally:
