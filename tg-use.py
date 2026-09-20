@@ -207,6 +207,94 @@ async def cmd_login() -> None:
     print(f'Сессия сохранена в {PROFILE}; следующий запуск подхватит её без QR.')
 
 
+JS_OPEN_INFO = '''() => {
+  const el = document.querySelector('.chat-info');  // верхняя плашка открытого чата
+  return {title: el ? el.innerText.trim().split('\\n')[0] : '',
+          bodyLen: document.body ? document.body.innerText.length : 0};  // 0 = не смонтирован
+}'''
+
+# клик по чату бота в списке чатов (хэш при старте webk надёжно не читает)
+JS_OPEN_CHAT = '''(name) => {
+  const needle = name.toLowerCase();
+  const items = [...document.querySelectorAll('a[href^="#"], [class*="chat-item"]')]
+    .filter(e => e.offsetParent !== null && e.innerText);
+  const el = items.find(e => e.innerText.toLowerCase().includes(needle));
+  if (!el) return false;
+  el.scrollIntoView({block: 'center'});
+  el.click();
+  return true;
+}'''
+
+JS_SET_HASH = '''(name) => { location.hash = "#@" + name; }'''
+
+
+def kill_webk_workers(base: str) -> int:
+    """Убить shared-воркеры webk по CDP HTTP-базе (например http://127.0.0.1:9222).
+    Их залипание = вечная загрузка вкладки; /json — единственная дверь к worker-таргетам.
+    ponytail: причина залипания не выяснена; если webk починят — просто удалить вызов."""
+    import urllib.request
+    with urllib.request.urlopen(base + '/json/list', timeout=5) as r:
+        targets = json.load(r)
+    ids = [t['id'] for t in targets
+           if t.get('type') == 'shared_worker' and 'web.telegram.org' in t.get('url', '')]
+    for i in ids:
+        urllib.request.urlopen(f'{base}/json/close/{i}', timeout=5).read()
+    return len(ids)
+
+
+async def wait_open(page, tries: int) -> dict:
+    """Заголовок открытого чата + смонтированность UI; проба до паузы (DOM-опрос — не темп)."""
+    for _ in range(tries):
+        st = json.loads(await page.evaluate(JS_OPEN_INFO))
+        if st['title'] or st['bodyLen']:
+            return st
+        await asyncio.sleep(2)
+    return {'title': '', 'bodyLen': 0}
+
+
+async def cmd_open(bot: str) -> None:
+    """Открыть чат бота в живом браузере: reload/переход + клик по чату; guard по заголовку; без отправок."""
+    name = bot.lstrip('@')
+    if not re.fullmatch(r'[A-Za-z0-9_]{4,64}', name):  # формат для UX; в JS имя идёт параметром
+        raise SystemExit(f'{bot!r}: жду username вида @name (латиница, цифры, _)')
+    browser = await connect()
+    try:
+        page = await browser.must_get_current_page()
+        url = await page.evaluate('() => location.href')
+        if url.startswith(TG_URL):
+            # reload библиотечный (CDP Page.reload): evaluate-location.reload() залипшую страницу не поднимает
+            await page.evaluate(JS_SET_HASH, name)
+            await page.reload()
+        else:
+            # пустая/чужая вкладка: полный переход, руками ничего не набираем
+            await page.goto(f'{TG_URL}#@{name}')
+        st = await wait_open(page, 15)  # медленный старт — норма: до ~30 c
+        if not st['bodyLen']:
+            # воркеры webk залипли (вечная загрузка): kill + reload ФРЕШ-сессией — сессия,
+            # пережившая залипание, отваливается от таргета и молча не делает reload
+            await browser.stop()
+            base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
+            killed = kill_webk_workers(base)
+            browser = await connect()
+            page = await browser.must_get_current_page()
+            await page.reload()
+            st = await wait_open(page, 15)
+            if not st['bodyLen']:
+                raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии; '
+                                 f'ничего не отправлено')
+        if name.lower() not in st['title'].lower():
+            # приложение живо, но чат не открыт — клик по чату в списке
+            if json.loads(await page.evaluate(JS_OPEN_CHAT, name)):
+                st = await wait_open(page, 8)
+            else:
+                st['title'] = ''
+    finally:
+        await browser.stop()
+    if name.lower() not in st['title'].lower():
+        raise SystemExit(f'чат {bot} не открылся (заголовок: {st["title"] or "пусто"}); ничего не отправлено')
+    print(json.dumps({'opened': bot, 'title': st['title']}, ensure_ascii=False))
+
+
 async def cmd_state() -> None:
     browser = await connect()
     try:
@@ -301,6 +389,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog='tg-use', description='Руки для харнеса: Telegram-боты через web.telegram.org')
     sub = parser.add_subparsers(dest='cmd', required=True)
     sub.add_parser('login', help='headed-браузер с persistent-профилем (QR сканирует человек)')
+    p_open = sub.add_parser('open', help='открыть чат бота: deep-link + reload, guard по заголовку, без отправок')
+    p_open.add_argument('bot', help='бот в форме @name')
     sub.add_parser('state', help='JSON: последнее сообщение бота + подписи кнопок')
     p_click = sub.add_parser('click', help='нажать inline-кнопку по подписи (пустая реакция = ошибка ребра)')
     p_click.add_argument('label')
@@ -315,6 +405,8 @@ def main() -> None:
     try:
         if args.cmd == 'login':
             asyncio.run(cmd_login())
+        elif args.cmd == 'open':
+            asyncio.run(cmd_open(args.bot))
         elif args.cmd == 'state':
             asyncio.run(cmd_state())
         elif args.cmd == 'click':

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 test_skeleton.py)",
+      "Bash(python3 test_crawl.py)",
+      "Bash(python3 test_hands.py)",
+      "Bash(python3 tg-use.py:*)"
+    ]
+  }
+}
