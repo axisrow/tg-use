@@ -34,6 +34,38 @@
         "Edit Privacy Policy",
         "« Back to Bot"
       ]
+    },
+    {
+      "id": "64145c11",
+      "text": "Settings for @leadhunter_8602734479_bot.",
+      "buttons": [
+        "Inline Mode",
+        "Secretary Mode",
+        "Allow Groups?",
+        "Group Privacy",
+        "Group Admin Rights",
+        "Channel Admin Rights",
+        "Payments",
+        "Domain",
+        "Menu Button",
+        "Configure Mini App",
+        "Paid Broadcast",
+        "« Back to Bot"
+      ]
+    },
+    {
+      "id": "bb02a8da",
+      "text": "Payment providers for LeadHunter (8602734479) @leadhunter_8602734479_bot.\n\nNo payment methods connected. Use the buttons below to add a new integration.",
+      "buttons": [
+        "🇳🇱 ECOMMPAY »",
+        "🇳🇱 Redsys »",
+        "Portmone »",
+        "Paycom.Uz »",
+        "Global Pay Uzbekistan »",
+        "FreedomPay UZ »",
+        "»",
+        "« Back to Bot"
+      ]
     }
   ],
   "edges": [
@@ -46,6 +78,21 @@
       "from": "b11800b2",
       "to": "8494ab00",
       "button": "Edit Bot"
+    },
+    {
+      "from": "b11800b2",
+      "to": "64145c11",
+      "button": "Bot Settings"
+    },
+    {
+      "from": "64145c11",
+      "to": "b11800b2",
+      "button": "« Back to Bot"
+    },
+    {
+      "from": "b11800b2",
+      "to": "bb02a8da",
+      "button": "Payments"
     }
   ]
 }
