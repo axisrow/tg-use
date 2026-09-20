@@ -47,7 +47,7 @@ class StubPage:
 
 
 def st(text, buttons=(), n=1):
-    return {'text': text, 'buttons': list(buttons), 'n': n}
+    return {'text': text, 'buttons': list(buttons), 'n': n, 'bodyLen': 10}
 
 
 def j(v):
@@ -213,10 +213,11 @@ expect(SystemExit, lambda: run_open([page]), 'не открылся')
 page = OpenPage(info=[oi('#-old', 300)], has_search=False)
 expect(SystemExit, lambda: run_open([page]), 'нет поля поиска')
 
-# revive: 15 проб мёртвого UI → kill(base) → фреш-сессия → reload → поиск → клик
+# revive: 15 проб мёртвого UI → kill(base) → фреш-сессия → reload → wait_open revive_page → поиск → клик
 dead = OpenPage(info=[oi('', 0)] * 15)
-alive = OpenPage(info=[oi('#', 200), oi('#8602734479', 200),
-                       oi('#8602734479', 200, title='LeadHunter (8602734479)')],
+alive = OpenPage(info=[oi('#', 200),  # wait_open внутри revive_page: UI ожил
+                       oi('#8602734479', 200),
+                       oi('#8602734479', 300, title='LeadHunter (8602734479)')],
                  found=['8602734479'])
 out, browsers, killed = run_open([dead, alive])
 assert out['opened'] == '@leadhunter_8602734479_bot'

@@ -41,11 +41,12 @@ DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'пере
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
   const last = bubbles[bubbles.length - 1];
-  if (!last) return {text: '', buttons: []};
+  const bodyLen = document.body ? document.body.innerText.length : 0;  // 0 = UI не смонтирован
+  if (!last) return {text: '', buttons: [], bodyLen};
   const t = last.querySelector('.translatable-message') || last.querySelector('.message');
   const buttons = [...last.querySelectorAll('button.reply-markup-button')]
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
-  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length};
+  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length, bodyLen};
 }'''
 
 # индекс кнопки по подписи среди всех кнопок документа (для get_elements_by_css_selector)
@@ -135,8 +136,12 @@ async def connect() -> BrowserSession:
 
 
 async def read_state(page) -> dict:
-    """Текст последнего сообщения бота + подписи кнопок (из живого чата)."""
-    return json.loads(await page.evaluate(JS_STATE))
+    """Текст последнего сообщения бота + подписи кнопок (из живого чата).
+    Несмонтированная страница ≠ пустой чат: честная ошибка вместо «бот молчит»."""
+    st = json.loads(await page.evaluate(JS_STATE))
+    if not st.get('bodyLen'):
+        raise RuntimeError('страница webk не смонтирована (воркеры залипли?) — оживи: open @bot')
+    return st
 
 
 async def wait_reaction(page, before_key: str) -> dict:
@@ -190,6 +195,7 @@ async def cmd_login() -> None:
     try:
         page = await browser.must_get_current_page()
         await page.goto(TG_URL)
+        assert browser.cdp_url  # после start() адрес всегда есть; сужает тип для pyright
         with open(CDP_FILE, 'w') as f:
             f.write(browser.cdp_url)
         print(f'браузер {browser.cdp_url} — адрес записан в {CDP_FILE}; окно не закрывать до конца работы.')
@@ -286,20 +292,8 @@ async def cmd_open(bot: str) -> None:
         if not url.startswith(TG_URL):
             # пустая/чужая вкладка: полный переход, руками ничего не набираем
             await page.goto(TG_URL)
-        st = await wait_open(page, 15)  # медленный старт — норма: до ~30 c
-        if not st['bodyLen']:
-            # воркеры webk залипли (вечная загрузка): kill + reload ФРЕШ-сессией — сессия,
-            # пережившая залипание, отваливается от таргета и молча не делает reload
-            await browser.stop()
-            base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
-            killed = kill_webk_workers(base)
-            browser = await connect()
-            page = await browser.must_get_current_page()
-            await page.reload()
-            st = await wait_open(page, 15)
-            if not st['bodyLen']:
-                raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии; '
-                                 f'ничего не отправлено')
+        if not (await wait_open(page, 15))['bodyLen']:  # медленный старт — норма: до ~30 c
+            browser, page = await revive_page(browser)  # воркеры webk залипли — оживляем
         # tweb индексирует диалоги вместе с username (getUserSearchText): локальный поиск —
         # единственный путь username → чат; результат даёт data-peer-id для верификации
         if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
@@ -325,19 +319,40 @@ async def cmd_open(bot: str) -> None:
     print(json.dumps({'opened': bot, 'title': st['title'], 'hash': st['hash']}, ensure_ascii=False))
 
 
-async def cmd_state() -> None:
+async def revive_page(browser) -> tuple:
+    """Оживить залипшую страницу: kill воркеров при отключённом клиенте + reload фреш-сессией.
+    Сессия, пережившая залипание, отваливается от таргета и молча не делает reload."""
+    await browser.stop()
+    base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
+    killed = kill_webk_workers(base)
     browser = await connect()
+    page = await browser.must_get_current_page()
+    await page.reload()
+    if not (await wait_open(page, 15))['bodyLen']:  # перемонтаж занимает ~5 c — ждём честно
+        raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии')
+    return browser, page
+
+
+async def live_page() -> tuple:
+    """Подключиться к живому браузеру; залипшую страницу оживить на месте. → (browser, page)."""
+    browser = await connect()
+    page = await browser.must_get_current_page()
+    if (await wait_open(page, 3))['bodyLen']:  # 3 пробы: не рубить воркеры на медленном старте
+        return browser, page
+    return await revive_page(browser)
+
+
+async def cmd_state() -> None:
+    browser, page = await live_page()
     try:
-        print(json.dumps(shown(await read_state(await browser.must_get_current_page())),
-                         ensure_ascii=False, indent=2))
+        print(json.dumps(shown(await read_state(page)), ensure_ascii=False, indent=2))
     finally:
         await browser.stop()
 
 
 async def cmd_click(label: str) -> None:
-    browser = await connect()
+    browser, page = await live_page()
     try:
-        page = await browser.must_get_current_page()
         st = shown(await do_click(page, label))
         print(f'клик «{label}» →', flush=True)
         print(json.dumps(st, ensure_ascii=False, indent=2))
@@ -356,9 +371,8 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
     if from_id and from_id[:8] not in {s['id'] for s in flow['states']}:
         # опечатка в id = висячее ребро и битая ссылка в Mermaid; проверяем до подключения к браузеру
         raise SystemExit(f'--from {from_id[:8]}: нет такого состояния в {ART}/flow.json')
-    browser = await connect()
+    browser, page = await live_page()
     try:
-        page = await browser.must_get_current_page()
         st = shown(await read_state(page))
     finally:
         await browser.stop()
@@ -377,8 +391,7 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
 async def cmd_test(scenario_path: str) -> None:
     """Прогнать сценарий [{do, expect}] → artifacts/report.json; падение = exit 1."""
     steps = json.load(open(scenario_path))
-    browser = await connect()
-    page = await browser.must_get_current_page()
+    browser, page = await live_page()
     results = []
     try:
         for i, step in enumerate(steps):
