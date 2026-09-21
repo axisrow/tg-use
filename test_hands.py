@@ -170,9 +170,13 @@ class FakeBrowser:
         self.stopped += 1
 
 
+made = []  # все FakeBrowser всех прогонов run_open — проверки после SystemExit-путей
+
+
 def run_open(pages):
     """cmd_open на фейках: pages по порядку connect-ов; kill подменён (записывает base, вернул 2)."""
     browsers = [FakeBrowser(p) for p in pages]
+    made.extend(browsers)
     state = {'n': 0}
     killed = []
 
@@ -230,6 +234,7 @@ assert dead.reloads == 0 and alive.reloads == 1  # reload только у фре
 # revive не спас: чистый SystemExit с числом убитых воркеров
 dead2, still = OpenPage(info=[oi('', 0)] * 15), OpenPage(info=[oi('', 0)] * 15)
 expect(SystemExit, lambda: run_open([dead2, still]), 'не ожил даже после kill 2 воркеров')
+assert made[-1].stopped == 1  # фреш-сессия остановлена и на SystemExit-пути revive
 
 
 # --- kill_webk_workers: /json/close только worker'ам webk; отказ CDP HTTP — SystemExit ---

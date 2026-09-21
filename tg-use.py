@@ -337,11 +337,15 @@ async def revive_page(browser) -> tuple:
     base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
     killed = kill_webk_workers(base)
     browser = await connect()
-    page = await browser.must_get_current_page()
-    await page.reload()
-    if not (await wait_open(page, 15))['bodyLen']:  # перемонтаж занимает ~5 c — ждём честно
-        raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии')
-    return browser, page
+    try:  # SystemExit не Exception: глотаем всё, но фреш-сессию останавливаем и перебрасываем
+        page = await browser.must_get_current_page()
+        await page.reload()
+        if not (await wait_open(page, 15))['bodyLen']:  # перемонтаж занимает ~5 c — ждём честно
+            raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии')
+        return browser, page
+    except BaseException:
+        await browser.stop()
+        raise
 
 
 async def live_page() -> tuple:
