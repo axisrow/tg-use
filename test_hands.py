@@ -300,6 +300,47 @@ assert browser is bs[1] and page is fresh
 assert killed == ['http://127.0.0.1:9222'] and not stuck.info and fresh.reloads == 1
 
 
+# --- cmd_test: прогон шага без do (только expect) и report по Ctrl+C — на фейках ---
+
+# шаг без do — read_state-шаг (валиден и на main): доходит до отчёта
+oe = scenario_file('only_expect.json', [{'expect': {'contains': 'Меню'}}])
+
+
+async def fake_live():
+    return FakeBrowser(None), StubPage([j(st('Меню', n=1))])
+
+
+real_live = tg.live_page
+tg.live_page = fake_live
+try:
+    asyncio.run(tg.cmd_test(oe))  # шаг прошёл — исключения нет
+finally:
+    tg.live_page = real_live
+report = json.load(open('artifacts/report.json'))
+assert report['pass'] and report['scenario'] == 'only_expect.json' and report['steps'][0]['pass']
+
+
+# Ctrl+C до первого шага: пустой report с pass=true не пишется, старый остаётся нетронутым
+class KiPage(StubPage):
+    async def evaluate(self, js, arg=None):
+        raise KeyboardInterrupt
+
+
+report_before = open('artifacts/report.json').read()
+
+
+async def fake_live_ki():
+    return FakeBrowser(None), KiPage()
+
+
+tg.live_page = fake_live_ki
+try:
+    expect(KeyboardInterrupt, tg.cmd_test(scenario_file('ki.json', [{'expect': None}])), '')
+finally:
+    tg.live_page = real_live
+assert open('artifacts/report.json').read() == report_before
+
+
 # --- kill_webk_workers: /json/close только worker'ам webk; ответ контролируется
 # живьём (200 + 'closing'); отказ CDP HTTP на /json/list — SystemExit ---
 

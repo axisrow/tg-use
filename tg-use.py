@@ -490,7 +490,7 @@ async def cmd_test(scenario_path: str) -> None:
     results = []
     try:
         for i, step in enumerate(steps):
-            do = step['do']
+            do = step.get('do', {})  # шаг без do — read_state-шаг, как и в предвалидации
             t0 = time.monotonic()
             try:
                 if 'click' in do:
@@ -510,11 +510,12 @@ async def cmd_test(scenario_path: str) -> None:
                 break  # дальше сценарий бессмыслен: хрупкие шаги после сломанного врут
     finally:
         await browser.stop()
-        passed = all(r['pass'] for r in results)  # в finally, чтобы report остался и по Ctrl+C
-        os.makedirs(ART, exist_ok=True)
-        with open(os.path.join(ART, 'report.json'), 'w') as f:
-            json.dump({'scenario': os.path.basename(scenario_path), 'pass': passed,
-                       'steps': results}, f, ensure_ascii=False, indent=2)
+        passed = all(r['pass'] for r in results)
+        if results:  # в finally, чтобы report остался и по Ctrl+C; Ctrl+C до первого шага
+            os.makedirs(ART, exist_ok=True)  # не пишет пустой report с pass=true — самообман
+            with open(os.path.join(ART, 'report.json'), 'w') as f:
+                json.dump({'scenario': os.path.basename(scenario_path), 'pass': passed,
+                           'steps': results}, f, ensure_ascii=False, indent=2)
     print(f'итог: {"PASS" if passed else "FAIL"} ({len(results)} шагов) → {ART}/report.json')
     if not passed:
         raise SystemExit(1)
