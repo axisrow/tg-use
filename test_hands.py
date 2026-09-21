@@ -61,14 +61,15 @@ expect(RuntimeError, tg.do_click(page, 'Yes, delete it'), 'deny')
 expect(RuntimeError, tg.do_click(page, 'Включить'), 'deny')
 assert not page.evals and page.selected == 0
 
-# промах кнопки: JS-клик не нашёл кнопку (false), страница больше не трогается
-page = StubPage([j(st('Меню', ['Bots'])), 'false'])
+# промах кнопки: JS-клик не нашёл кнопку ('False'), страница больше не трогается
+page = StubPage([j(st('Меню', ['Bots'])), 'False'])
 expect(RuntimeError, tg.do_click(page, 'Нет такой'), 'нет под последним сообщением')
 assert page.selected == 0
 
-# успешный клик: один evaluate нашёл и нажал кнопку (без пере-запроса DOM), реакция по контенту
+# успешный клик: один evaluate нашёл и нажал кнопку ('True' — питонизированный булев),
+# без пере-запроса DOM; реакция по контенту
 s1, s2 = st('Меню', ['Bots'], n=1), st('Раздел Bots', ['Back'], n=2)
-page = StubPage([j(s1), 'true', j(s2)])
+page = StubPage([j(s1), 'True', j(s2)])
 out = asyncio.run(tg.do_click(page, 'Bots'))
 assert out['text'] == s2['text'] and page.selected == 0 and page.enters == 0
 

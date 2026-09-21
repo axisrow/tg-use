@@ -195,7 +195,8 @@ async def do_click(page, label: str) -> dict:
     if is_dangerous(label):
         raise RuntimeError(f'«{label}» — опасная кнопка, CLI её не нажимает (deny-лист)')
     before = await read_state(page)
-    if not json.loads(await page.evaluate(JS_CLICK_BUTTON, label)):
+    # evaluate питонизирует голые булевы (JS true → 'True'), это не JSON — json.loads падает
+    if (await page.evaluate(JS_CLICK_BUTTON, label)) != 'True':
         raise RuntimeError(f'кнопки «{label}» нет под последним сообщением бота')
     return await wait_reaction(page, before)
 
