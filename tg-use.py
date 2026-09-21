@@ -40,7 +40,7 @@ DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'пере
              'turn on', 'turn off', 'enable', 'disable',
              'включ', 'выключ')  # деструктив, платежи (вне v1) и переключатели настроек бота
 DANGEROUS_WORDS = re.compile(r'\b(yes|да)\b')  # подтверждения — по границе слова:
-# подстрока 'yes' ловила 'greyish', а 'да,' — не ловила голое «Да» (issue #10)
+# подстрока 'yes' ловила 'eyes', а 'да,' — не ловила голое «Да» (issue #10)
 
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
