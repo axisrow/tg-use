@@ -98,12 +98,18 @@ expect(RuntimeError, tg.do_send(page, '/start'), 'не удалось ввест
 
 # тишина: wait_reaction доходит до таймаута и падает
 page = StubPage([j(st('Меню', n=1))] * 20)
-expect(RuntimeError, tg.wait_reaction(page, tg.reaction_key(st('Меню', n=1))),
-       'реакции бота не последовало')
+expect(RuntimeError, tg.wait_reaction(page, st('Меню', n=1)), 'реакции бота не последовало')
 
-# дубль-сообщение бота (тот же текст, n+1) считается реакцией, а не тишиной
-page = StubPage([j(st('Меню', n=2))])
-out = asyncio.run(tg.wait_reaction(page, tg.reaction_key(st('Меню', n=1))))
+# n+1 без подтверждения не реакция: n дёргается (виртуализация) — реакция только
+# после двух подряд одинаковых проб (n=2, n=1, n=2, n=2 → отдаём на четвёртой)
+page = StubPage([j(st('Меню', n=2)), j(st('Меню', n=1)),
+                 j(st('Меню', n=2)), j(st('Меню', n=2))])
+out = asyncio.run(tg.wait_reaction(page, st('Меню', n=1)))
+assert out['n'] == 2 and not page.evals
+
+# дубль-сообщение бота (тот же текст, n+1) — реакция после двух одинаковых проб
+page = StubPage([j(st('Меню', n=2))] * 2)
+out = asyncio.run(tg.wait_reaction(page, st('Меню', n=1)))
 assert out['n'] == 2
 
 # read_state: несмонтированная страница — честная ошибка, а не «бот молчит»
@@ -321,6 +327,19 @@ try:
 finally:
     urllib.request.urlopen = real_urlopen
 
+
+# --- cdp_alive: адрес из CDP_FILE, только если браузер отвечает по HTTP ---
+
+tg.CDP_FILE = os.path.join(tempfile.mkdtemp(), 'cdp')
+assert tg.cdp_alive() == ''  # файла нет
+with open(tg.CDP_FILE, 'w') as f:
+    f.write('ws://127.0.0.1:9333/devtools/browser/x')
+urllib.request.urlopen = boom
+assert tg.cdp_alive() == ''  # файл есть, браузер мёртв
+urllib.request.urlopen = lambda url, timeout=None: FakeResp(b'{}')
+assert tg.cdp_alive() == 'ws://127.0.0.1:9333/devtools/browser/x'
+urllib.request.urlopen = real_urlopen
+
 # страховка расползания: unit-тесты не касаются двери наружу (CDP/браузер)
 # сам файл не сканируем — его литералы живут здесь
 banned = ['cdp_url', 'BrowserSession(', 'connect()']
@@ -329,4 +348,4 @@ for name in ('test_skeleton.py', 'test_crawl.py'):
     src = open(os.path.join(here, name)).read()
     hits = [b for b in banned if b in src]
     assert not hits, f'{name}: unit-тест трогает дверь наружу: {hits}'
-print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers')
+print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers / cdp_alive')

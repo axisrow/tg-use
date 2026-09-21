@@ -17,9 +17,15 @@ ok, why = tg.check_expect('abc', {'contains': 'x', 'regex': r'\d'})
 assert not ok and why.startswith('в тексте нет')
 assert not tg.check_expect('abc', {'containes': 'a'})[0]  # опечатка в expect = падение, не ложный PASS
 
-# дубль-сообщение бота (тот же текст) = реакция по reaction_key, но то же состояние по state_key
-assert tg.state_key({'text': 'a', 'buttons': []}) == tg.state_key({'text': 'a', 'buttons': []})
-assert tg.reaction_key({'text': 'a', 'buttons': [], 'n': 1}) != tg.reaction_key({'text': 'a', 'buttons': [], 'n': 2})
+# реакция = смена текста/кнопок, ИЛИ рост n, подтверждённый двумя подряд одинаковыми пробами
+a = {'text': 'a', 'buttons': ['b'], 'n': 1}
+assert tg.state_key(a) == tg.state_key({'text': 'a', 'buttons': ['b'], 'n': 5})  # n сам по себе не меняет состояние
+assert tg.reaction_seen({'text': 'другое', 'buttons': ['b'], 'n': 1}, a, '')  # смена контента — реакция сразу
+assert not tg.reaction_seen(dict(a), a, '')  # тишина
+grown = {'text': 'a', 'buttons': ['b'], 'n': 2}
+assert not tg.reaction_seen(grown, a, '')  # рост n первой пробой не верим: список бабблов догружается сам
+assert tg.reaction_seen(grown, a, tg.reaction_key(grown))  # две подряд одинаковые пробы — верим
+assert not tg.reaction_seen({'text': 'a', 'buttons': ['b'], 'n': 0}, a, tg.reaction_key(grown))  # n не вырос
 
 # в CLI не осталось обращений к внешним моделям (критерий приёмки эпика)
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg-use.py')).read()

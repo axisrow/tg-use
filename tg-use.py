@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import time
+import urllib.request
 
 from browser_use.browser import BrowserSession
 
@@ -90,9 +91,19 @@ def state_key(st: dict) -> str:
 
 
 def reaction_key(st: dict) -> str:
-    """Ключ для ожидания реакции: тот же ключ + число входящих сообщений,
-    чтобы повтор-дубль от бота (тот же текст) считался реакцией, а не тишиной."""
+    """Ключ пробы состояния (текст + кнопки + n): для сравнения двух подряд опросов.
+    Сам по себе реакцией НЕ считается: список бабблов виртуализирован и n гуляет без бота."""
     return hashlib.sha1((str(st.get('n', 0)) + st['text'] + str(sorted(st['buttons']))).encode()).hexdigest()
+
+
+def reaction_seen(st: dict, before: dict, prev_rk: str) -> bool:
+    """Реакция бота на действие: сменились текст/кнопки, ИЛИ вырос n — но рост верим
+    только после двух подряд одинаковых проб (догрузка истории меняет n без действия бота).
+    Граница эвристики: если виртуализация сдула список ниже before.n, дубль бота может
+    не дотянуть до before.n — таймаут (FAIL); ложных реакций это не даёт никогда."""
+    if state_key(st) != state_key(before):
+        return True
+    return bool(prev_rk) and st.get('n', 0) > before.get('n', 0) and reaction_key(st) == prev_rk
 
 
 def check_expect(text: str, expect: dict | None) -> tuple[bool, str]:
@@ -121,6 +132,20 @@ def write_artifacts(flow: dict, d: str = ART) -> None:
         f.write('# flow\n\n```mermaid\n' + '\n'.join(lines) + '\n```\n')
 
 
+def cdp_alive() -> str:
+    """Адрес живого браузера из CDP_FILE, если тот отвечает по HTTP, иначе ''."""
+    try:
+        cdp = open(CDP_FILE).read().strip()
+    except OSError:
+        return ''
+    base = cdp.split('/devtools')[0].replace('ws', 'http', 1)
+    try:
+        urllib.request.urlopen(base + '/json/version', timeout=3).read()
+    except Exception:  # файл протух или браузер умер
+        return ''
+    return cdp
+
+
 async def connect() -> BrowserSession:
     """Подключиться к браузеру, оставленному login (адрес в ~/.tg-use-cdp)."""
     try:
@@ -144,14 +169,16 @@ async def read_state(page) -> dict:
     return st
 
 
-async def wait_reaction(page, before_key: str) -> dict:
-    """Опрашивать состояние, пока бот не среагирует; тишина — ошибка ребра."""
+async def wait_reaction(page, before: dict) -> dict:
+    """Опрашивать состояние, пока бот не среагирует (reaction_seen); тишина — ошибка ребра."""
     deadline = time.monotonic() + WAIT
+    prev_rk = ''
     while True:
         await asyncio.sleep(POLL)
         st = await read_state(page)
-        if reaction_key(st) != before_key:
+        if reaction_seen(st, before, prev_rk):
             return st
+        prev_rk = reaction_key(st)
         if time.monotonic() > deadline:
             raise RuntimeError('реакции бота не последовало (состояние не изменилось)')
 
@@ -166,7 +193,7 @@ async def do_click(page, label: str) -> dict:
         raise RuntimeError(f'кнопки «{label}» нет под последним сообщением бота')
     button = (await page.get_elements_by_css_selector('button.reply-markup-button'))[idx]
     await button.click()
-    return await wait_reaction(page, reaction_key(before))
+    return await wait_reaction(page, before)
 
 
 async def do_send(page, text: str) -> dict:
@@ -179,7 +206,7 @@ async def do_send(page, text: str) -> dict:
     if typed != 'typed:true':
         raise RuntimeError(f'не удалось ввести «{text}» (поле ввода: {typed or "нет ответа"})')
     await page.press('Enter')
-    return await wait_reaction(page, reaction_key(before))
+    return await wait_reaction(page, before)
 
 
 def shown(st: dict) -> dict:
@@ -189,9 +216,21 @@ def shown(st: dict) -> dict:
 
 
 async def cmd_login() -> None:
-    """Headed-браузер с persistent-профилем; адрес живого браузера — в ~/.tg-use-cdp."""
-    browser = BrowserSession(user_data_dir=PROFILE, headless=False)
-    await browser.start()
+    """Headed-браузер с persistent-профилем; адрес живого браузера — в ~/.tg-use-cdp.
+    Повторный login к живому Chromium подключается, а не запускает второй: второй на том
+    же профиле молча пересоздаёт браузер в пустом temp-профиле (SingletonLock) — сессия
+    терялась при напечатанном «Сессия сохранена»."""
+    alive = cdp_alive()
+    if alive:
+        print(f'живой Chromium уже работает ({alive}); второй не запускаю — переиспользую его.')
+        browser = await connect()
+    else:
+        # ponytail: зомби-браузер без CDP-файла не ловим — после kill() в finally такие
+        # не остаются; поймать руками удалённый файл при живом окне можно только так
+        if os.path.exists(CDP_FILE):
+            os.remove(CDP_FILE)  # протухший адрес мёртвого браузера только путает
+        browser = BrowserSession(user_data_dir=PROFILE, headless=False)
+        await browser.start()
     try:
         page = await browser.must_get_current_page()
         await page.goto(TG_URL)
@@ -208,10 +247,16 @@ async def cmd_login() -> None:
             print('stdin закрыт: окно держится открытым; останови процесс (Ctrl+C/kill), когда закончишь.')
             await asyncio.Event().wait()
     finally:
-        await browser.stop()
-        if os.path.exists(CDP_FILE):
-            os.remove(CDP_FILE)
-    print(f'Сессия сохранена в {PROFILE}; следующий запуск подхватит её без QR.')
+        if alive:
+            await browser.stop()  # ранее запущенный Chromium остаётся живым, адрес в файле
+        else:
+            await browser.kill()  # stop() оставил бы зомби-браузер без CDP-файла: повторный
+            if os.path.exists(CDP_FILE):
+                os.remove(CDP_FILE)  # login считал бы, что браузера нет, хотя он жив
+    if alive:
+        print(f'браузер остаётся живым; подкоманды подключатся через {CDP_FILE}.')
+    else:
+        print(f'Сессия сохранена в {PROFILE}; следующий запуск подхватит её без QR.')
 
 
 # guard по location.hash: webk пишет туда peerId открытого чата (#8602734479),
@@ -262,7 +307,6 @@ def kill_webk_workers(base: str) -> int:
     """Убить shared-воркеры webk по CDP HTTP-базе (например http://127.0.0.1:9222).
     Их залипание = вечная загрузка вкладки; /json — единственная дверь к worker-таргетам.
     ponytail: причина залипания не выяснена; если webk починят — просто удалить вызов."""
-    import urllib.request
     try:
         with urllib.request.urlopen(base + '/json/list', timeout=5) as r:
             targets = json.load(r)
