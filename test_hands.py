@@ -106,6 +106,14 @@ page = StubPage([j(st('Меню', n=2))])
 out = asyncio.run(tg.wait_reaction(page, tg.reaction_key(st('Меню', n=1))))
 assert out['n'] == 2
 
+# read_state: несмонтированная страница — честная ошибка, а не «бот молчит»
+expect(RuntimeError, tg.read_state(StubPage([j({'text': '', 'buttons': [], 'bodyLen': 0})])),
+       'не смонтирована')
+
+# read_state: смонтированная страница без входящих — пустое состояние, не ошибка
+out = asyncio.run(tg.read_state(StubPage([j({'text': '', 'buttons': [], 'bodyLen': 300})])))
+assert out['text'] == '' and out['bodyLen'] == 300
+
 # open: кривой username — отказ до connect (валидация формата, offline)
 expect(SystemExit, tg.cmd_open('bad name!'), 'жду username')
 
@@ -237,6 +245,43 @@ expect(SystemExit, lambda: run_open([dead2, still]), 'не ожил даже п�
 assert made[-1].stopped == 1  # фреш-сессия остановлена и на SystemExit-пути revive
 
 
+# --- live_page: общий вход живых подкоманд — проба монтирования → revive при залипании ---
+
+def run_live(pages, kill):
+    """live_page на фейках: pages по порядку connect-ов; kill подменён."""
+    browsers = [FakeBrowser(p) for p in pages]
+    state = {'n': 0}
+
+    async def fake_connect():
+        state['n'] += 1
+        return browsers[state['n'] - 1]
+
+    async def run():
+        real_connect, real_kill = tg.connect, tg.kill_webk_workers
+        tg.connect, tg.kill_webk_workers = fake_connect, kill
+        try:
+            return await tg.live_page()
+        finally:
+            tg.connect, tg.kill_webk_workers = real_connect, real_kill
+
+    return asyncio.run(run()), browsers
+
+
+# живая вкладка: одна проба → сессия возвращена как есть, без kill и reload
+alive = OpenPage(info=[oi('#x', 300)])
+(browser, page), bs = run_live([alive], lambda b: 2)
+assert browser is bs[0] and page is alive
+assert not alive.info and alive.reloads == 0
+
+# залипшая вкладка: 8 проб мёртвого UI → kill(base) → фреш-сессия → reload → ожила на 2-й пробе
+killed = []
+stuck = OpenPage(info=[oi('', 0)] * 8)
+fresh = OpenPage(info=[oi('', 0), oi('#x', 300)])
+(browser, page), bs = run_live([stuck, fresh], lambda b: (killed.append(b), 2)[1])
+assert browser is bs[1] and page is fresh
+assert killed == ['http://127.0.0.1:9222'] and not stuck.info and fresh.reloads == 1
+
+
 # --- kill_webk_workers: /json/close только worker'ам webk; отказ CDP HTTP — SystemExit ---
 
 class FakeResp:
@@ -284,4 +329,4 @@ for name in ('test_skeleton.py', 'test_crawl.py'):
     src = open(os.path.join(here, name)).read()
     hits = [b for b in banned if b in src]
     assert not hits, f'{name}: unit-тест трогает дверь наружу: {hits}'
-print('ok: do_click / do_send / wait_reaction / cmd_save / cmd_open (поиск+клик, guard, revive) / kill_webk_workers')
+print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers')

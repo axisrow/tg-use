@@ -352,7 +352,9 @@ async def live_page() -> tuple:
     """Подключиться к живому браузеру; залипшую страницу оживить на месте. → (browser, page)."""
     browser = await connect()
     page = await browser.must_get_current_page()
-    if (await wait_open(page, 3))['bodyLen']:  # 3 пробы: не рубить воркеры на медленном старте
+    # ponytail: порог 8 проб ≈ 16 c — компромисс: живой медленный старт (норма до ~30 c)
+    # чаще переживает, а мёртвую вкладку не тянем полминуты; убитые живые начнутся — поднять до 15
+    if (await wait_open(page, 8))['bodyLen']:
         return browser, page
     return await revive_page(browser)
 
