@@ -98,7 +98,9 @@ def reaction_key(st: dict) -> str:
 
 def reaction_seen(st: dict, before: dict, prev_rk: str) -> bool:
     """Реакция бота на действие: сменились текст/кнопки, ИЛИ вырос n — но рост верим
-    только после двух подряд одинаковых проб (догрузка истории меняет n без действия бота)."""
+    только после двух подряд одинаковых проб (догрузка истории меняет n без действия бота).
+    Граница эвристики: если виртуализация сдула список ниже before.n, дубль бота может
+    не дотянуть до before.n — таймаут (FAIL); ложных реакций это не даёт никогда."""
     if state_key(st) != state_key(before):
         return True
     return bool(prev_rk) and st.get('n', 0) > before.get('n', 0) and reaction_key(st) == prev_rk
