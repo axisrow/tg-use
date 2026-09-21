@@ -36,7 +36,7 @@ POLL = 2.5    # темп 2–3 c между действиями в чате
 WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
 OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
 DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
-             'pay', 'оплат', 'buy', 'wallet', 'invoice',
+             'pay', 'оплат', 'buy', 'wallet', 'кошел', 'invoice',
              'turn on', 'turn off', 'enable', 'disable',
              'включ', 'выключ')  # деструктив, платежи (вне v1) и переключатели настроек бота
 DANGEROUS_WORDS = re.compile(r'\b(yes|да)\b')  # подтверждения — по границе слова:

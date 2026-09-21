@@ -15,7 +15,7 @@ assert is_dangerous('Yes, delete it') and is_dangerous('Revoke current token') a
 assert is_dangerous('Turn on inline mode') and is_dangerous('Disable privacy mode') and is_dangerous('Включить')
 assert is_dangerous('Да') and is_dangerous('YES')  # подтверждения по границе слова (issue #10)
 assert is_dangerous('Оплатить подписку') and is_dangerous('Pay $5') and is_dangerous('Buy stars')
-assert is_dangerous('Wallet') and is_dangerous('Invoice')
+assert is_dangerous('Wallet') and is_dangerous('Кошелёк') and is_dangerous('Invoice')
 assert not is_dangerous('Награда') and not is_dangerous('Eyes mode')  # граница слова: подстроки да/yes мимо
 assert not is_dangerous('Edit Bot') and not is_dangerous('API Token') and not is_dangerous('Bot Settings')
 secret = '8602734479:AAHxEXAMPLE-TOKEN_1234567890abcd'
