@@ -127,6 +127,26 @@ with open('artifacts/flow.json', 'w') as f:
 expect(SystemExit, tg.cmd_save('zzzzzz', '', ''), 'нет такого состояния')
 
 
+# --- cmd_test: валидация сценария до подключения к браузеру (offline) ---
+
+tmp = tempfile.mkdtemp()
+
+
+def scenario_file(name, content):
+    path = os.path.join(tmp, name)
+    with open(path, 'w') as f:
+        f.write(content if isinstance(content, str) else json.dumps(content))
+    return path
+
+
+expect(SystemExit, tg.cmd_test(scenario_file('broken.json', '{не json')), 'битый')
+expect(SystemExit, tg.cmd_test(scenario_file('empty.json', [])), 'непустой список')
+expect(SystemExit, tg.cmd_test(scenario_file('notlist.json', {'do': {}})), 'непустой список')
+expect(SystemExit, tg.cmd_test(scenario_file('weird.json', [{'do': {'foo': 1}}])), 'жду {"do"')
+expect(SystemExit, tg.cmd_test(scenario_file('both.json', [{'do': {'click': 'X', 'send': '/x'}}])),
+       'что-то одно')
+
+
 # --- cmd_open: guard по hash (#@username), а не по display name из .chat-info ---
 
 def oi(h, body, title='LeadHunter (8602734479)'):
@@ -280,6 +300,47 @@ assert browser is bs[1] and page is fresh
 assert killed == ['http://127.0.0.1:9222'] and not stuck.info and fresh.reloads == 1
 
 
+# --- cmd_test: прогон шага без do (только expect) и report по Ctrl+C — на фейках ---
+
+# шаг без do — read_state-шаг (валиден и на main): доходит до отчёта
+oe = scenario_file('only_expect.json', [{'expect': {'contains': 'Меню'}}])
+
+
+async def fake_live():
+    return FakeBrowser(None), StubPage([j(st('Меню', n=1))])
+
+
+real_live = tg.live_page
+tg.live_page = fake_live
+try:
+    asyncio.run(tg.cmd_test(oe))  # шаг прошёл — исключения нет
+finally:
+    tg.live_page = real_live
+report = json.load(open('artifacts/report.json'))
+assert report['pass'] and report['scenario'] == 'only_expect.json' and report['steps'][0]['pass']
+
+
+# Ctrl+C до первого шага: пустой report с pass=true не пишется, старый остаётся нетронутым
+class KiPage(StubPage):
+    async def evaluate(self, js, arg=None):
+        raise KeyboardInterrupt
+
+
+report_before = open('artifacts/report.json').read()
+
+
+async def fake_live_ki():
+    return FakeBrowser(None), KiPage()
+
+
+tg.live_page = fake_live_ki
+try:
+    expect(KeyboardInterrupt, tg.cmd_test(scenario_file('ki.json', [{'expect': None}])), '')
+finally:
+    tg.live_page = real_live
+assert open('artifacts/report.json').read() == report_before
+
+
 # --- kill_webk_workers: /json/close только worker'ам webk; ответ контролируется
 # живьём (200 + 'closing'); отказ CDP HTTP на /json/list — SystemExit ---
 
@@ -344,4 +405,4 @@ for name in ('test_skeleton.py', 'test_crawl.py'):
     src = open(os.path.join(here, name)).read()
     hits = [b for b in banned if b in src]
     assert not hits, f'{name}: unit-тест трогает дверь наружу: {hits}'
-print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers / cdp_alive')
+print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_test (валидация сценария) / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers / cdp_alive')
