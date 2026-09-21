@@ -41,7 +41,8 @@ DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'пере
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
   const last = bubbles[bubbles.length - 1];
-  if (!last) return {text: '', buttons: []};
+  if (!last) return {text: '', buttons: [],
+                     bodyLen: document.body ? document.body.innerText.length : 0};
   const t = last.querySelector('.translatable-message') || last.querySelector('.message');
   const buttons = [...last.querySelectorAll('button.reply-markup-button')]
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
@@ -135,8 +136,12 @@ async def connect() -> BrowserSession:
 
 
 async def read_state(page) -> dict:
-    """Текст последнего сообщения бота + подписи кнопок (из живого чата)."""
-    return json.loads(await page.evaluate(JS_STATE))
+    """Текст последнего сообщения бота + подписи кнопок (из живого чата).
+    Несмонтированная страница ≠ пустой чат: честная ошибка вместо «бот молчит»."""
+    st = json.loads(await page.evaluate(JS_STATE))
+    if not (st.get('bodyLen') or st.get('n')):  # нет сообщений И нет body → UI не смонтирован
+        raise RuntimeError('страница webk не смонтирована (воркеры залипли?) — оживи: open @bot')
+    return st
 
 
 async def wait_reaction(page, before_key: str) -> dict:
@@ -190,6 +195,7 @@ async def cmd_login() -> None:
     try:
         page = await browser.must_get_current_page()
         await page.goto(TG_URL)
+        assert browser.cdp_url  # после start() адрес всегда есть; сужает тип для pyright
         with open(CDP_FILE, 'w') as f:
             f.write(browser.cdp_url)
         print(f'браузер {browser.cdp_url} — адрес записан в {CDP_FILE}; окно не закрывать до конца работы.')
@@ -217,24 +223,32 @@ JS_OPEN_INFO = '''() => {
           bodyLen: document.body ? document.body.innerText.length : 0};  // 0 = не смонтирован
 }'''
 
-# локальный поиск tweb индексирует диалоги вместе с username (getUserSearchText) —
-# единственный путь username → чат: hash-роутинг webk перехватывает hash-навигации,
-# глобального резолва без Enter нет. Ищем username, кликаем первый результат группы.
+# локальный поиск: панель может быть свёрнута (querySelector хватает скрытого
+# поля-двойника) — берём только видимое поле; если панель закрыта, открывает триггер.
 JS_OPEN_SEARCH = '''(query) => {
-  const input = document.querySelector('.input-search-input');
-  if (!input) return 0;
-  input.focus();
-  input.value = '';  // без очистки старый запрос глушит новый ввод
+  const fields = [...document.querySelectorAll('.input-search-input')]
+    .filter(e => e.offsetParent !== null);
+  if (!fields.length) return 0;
+  fields[0].focus();
+  fields[0].value = '';  // без очистки старый запрос глушит новый ввод
   document.execCommand('insertText', false, query);
   return 1;
 }'''
 
-# результат поисковой группы, чей текст содержит @username (подзаголовок результата):
-# клик и его peer-id; '' если ещё не отрендерилось. Полный набор mousedown/mouseup/click —
-# голый el.click() tweb-строку не открывает
+JS_SEARCH_TRIGGER = '''() => {
+  const t = document.querySelector('.sidebar-header-search-trigger');
+  if (t) t.click();
+  return !!t;
+}'''
+
+# строка результата поиска: при открытой панели видимые .chatlist-chat — только
+# результаты; их текст содержит display name (BotFather | 8 576 822 users), а не
+# @username — матчим нормализованно (не-буквоцифры в мусор): форматы различаются.
+# Полный набор mousedown/mouseup/click — голый el.click() tweb-строку не открывает
 JS_CLICK_FOUND = '''(needle) => {
-  const el = [...document.querySelectorAll('.search-group .chatlist-chat')]
-    .find(e => e.offsetParent !== null && (e.innerText || '').toLowerCase().includes(needle));
+  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const el = [...document.querySelectorAll('.chatlist-chat')]
+    .find(e => e.offsetParent !== null && norm(e.innerText).includes(norm(needle)));
   if (!el) return '';
   const peer = el.getAttribute('data-peer-id') || (el.getAttribute('href') || '').slice(1);
   for (const type of ['mousedown', 'mouseup', 'click']) {
@@ -286,58 +300,76 @@ async def cmd_open(bot: str) -> None:
         if not url.startswith(TG_URL):
             # пустая/чужая вкладка: полный переход, руками ничего не набираем
             await page.goto(TG_URL)
-        st = await wait_open(page, 15)  # медленный старт — норма: до ~30 c
-        if not st['bodyLen']:
-            # воркеры webk залипли (вечная загрузка): kill + reload ФРЕШ-сессией — сессия,
-            # пережившая залипание, отваливается от таргета и молча не делает reload
-            await browser.stop()
-            base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
-            killed = kill_webk_workers(base)
-            browser = await connect()
-            page = await browser.must_get_current_page()
-            await page.reload()
-            st = await wait_open(page, 15)
-            if not st['bodyLen']:
-                raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии; '
-                                 f'ничего не отправлено')
-        # tweb индексирует диалоги вместе с username (getUserSearchText): локальный поиск —
-        # единственный путь username → чат; результат даёт data-peer-id для верификации
+        if not (await wait_open(page, 15))['bodyLen']:  # медленный старт — норма: до ~30 c
+            browser, page = await revive_page(browser)  # воркеры webk залипли — оживляем
+        # локальный поиск — путь username → чат; результат даёт data-peer-id для верификации
         if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
-            raise SystemExit('нет поля поиска webk; ничего не отправлено')
+            await page.evaluate(JS_SEARCH_TRIGGER)  # панель поиска свёрнута — открыть кликом
+            await asyncio.sleep(OPEN_POLL)
+            if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
+                raise SystemExit('нет поля поиска webk; ничего не отправлено')
         peer = ''
         for _ in range(10):  # ~20 c: индекс/рендер результатов
-            peer = (await page.evaluate(JS_CLICK_FOUND, '@' + name.lower())) or ''
+            peer = (await page.evaluate(JS_CLICK_FOUND, name.lower())) or ''
             if peer:
                 break
             await asyncio.sleep(OPEN_POLL)
         if not peer:
             raise SystemExit(f'чат {bot} не найден в диалогах webk (поиск по username); '
                              f'ничего не отправлено')
-        # tweb переписывает hash на #peerId или #@username — ждём любой из двух
-        st = await wait_open(page, 10, want=('#' + peer, '#@' + name.lower()))
+        # tweb переписывает hash на #peerId (у ботов #<минус>peerId) или #@username
+        wants = ('#' + peer, '#-' + peer, '#@' + name.lower())
+        await wait_open(page, 10, want=wants)
         await asyncio.sleep(OPEN_POLL)  # дать плашке чата устаканиться после закрытия поиска
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
     finally:
         await browser.stop()
-    if not (st['bodyLen'] and st['hash'].lower() in ('#' + peer.lower(), '#@' + name.lower())):
+    if not (st['bodyLen'] and st['hash'].lower() in wants):
         raise SystemExit(f'чат {bot} не открылся (hash: {st["hash"] or "пусто"}, '
                          f'заголовок: {st["title"] or "пусто"}); ничего не отправлено')
     print(json.dumps({'opened': bot, 'title': st['title'], 'hash': st['hash']}, ensure_ascii=False))
 
 
-async def cmd_state() -> None:
+async def revive_page(browser) -> tuple:
+    """Оживить залипшую страницу: kill воркеров при отключённом клиенте + reload фреш-сессией.
+    Сессия, пережившая залипание, отваливается от таргета и молча не делает reload."""
+    await browser.stop()
+    base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
+    killed = kill_webk_workers(base)
     browser = await connect()
+    try:  # SystemExit не Exception: глотаем всё, но фреш-сессию останавливаем и перебрасываем
+        page = await browser.must_get_current_page()
+        await page.reload()
+        if not (await wait_open(page, 15))['bodyLen']:  # перемонтаж занимает ~5 c — ждём честно
+            raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии')
+        return browser, page
+    except BaseException:
+        await browser.stop()
+        raise
+
+
+async def live_page() -> tuple:
+    """Подключиться к живому браузеру; залипшую страницу оживить на месте. → (browser, page)."""
+    browser = await connect()
+    page = await browser.must_get_current_page()
+    # ponytail: порог 8 проб ≈ 16 c — компромисс: живой медленный старт (норма до ~30 c)
+    # чаще переживает, а мёртвую вкладку не тянем полминуты; убитые живые начнутся — поднять до 15
+    if (await wait_open(page, 8))['bodyLen']:
+        return browser, page
+    return await revive_page(browser)
+
+
+async def cmd_state() -> None:
+    browser, page = await live_page()
     try:
-        print(json.dumps(shown(await read_state(await browser.must_get_current_page())),
-                         ensure_ascii=False, indent=2))
+        print(json.dumps(shown(await read_state(page)), ensure_ascii=False, indent=2))
     finally:
         await browser.stop()
 
 
 async def cmd_click(label: str) -> None:
-    browser = await connect()
+    browser, page = await live_page()
     try:
-        page = await browser.must_get_current_page()
         st = shown(await do_click(page, label))
         print(f'клик «{label}» →', flush=True)
         print(json.dumps(st, ensure_ascii=False, indent=2))
@@ -356,9 +388,8 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
     if from_id and from_id[:8] not in {s['id'] for s in flow['states']}:
         # опечатка в id = висячее ребро и битая ссылка в Mermaid; проверяем до подключения к браузеру
         raise SystemExit(f'--from {from_id[:8]}: нет такого состояния в {ART}/flow.json')
-    browser = await connect()
+    browser, page = await live_page()
     try:
-        page = await browser.must_get_current_page()
         st = shown(await read_state(page))
     finally:
         await browser.stop()
@@ -377,8 +408,7 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
 async def cmd_test(scenario_path: str) -> None:
     """Прогнать сценарий [{do, expect}] → artifacts/report.json; падение = exit 1."""
     steps = json.load(open(scenario_path))
-    browser = await connect()
-    page = await browser.must_get_current_page()
+    browser, page = await live_page()
     results = []
     try:
         for i, step in enumerate(steps):
