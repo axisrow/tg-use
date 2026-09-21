@@ -17,14 +17,6 @@ tg.WAIT, tg.POLL = 0.2, 0.05  # ускоренный таймаут тишины
 tg.OPEN_POLL = 0.01  # и паузу проб open — иначе revive-тест ждал бы 30 c
 
 
-class FakeEl:
-    def __init__(self):
-        self.clicked = 0
-
-    async def click(self):
-        self.clicked += 1
-
-
 class StubPage:
     """Страница-заглушка: evaluate отдаёт ответы по очереди; лишнее касание = падение теста."""
 
@@ -69,17 +61,16 @@ expect(RuntimeError, tg.do_click(page, 'Yes, delete it'), 'deny')
 expect(RuntimeError, tg.do_click(page, 'Включить'), 'deny')
 assert not page.evals and page.selected == 0
 
-# промах кнопки: поиск вернул -1, до элементов дело не дошло
-page = StubPage([j(st('Меню', ['Bots'])), '-1'])
+# промах кнопки: JS-клик не нашёл кнопку (false), страница больше не трогается
+page = StubPage([j(st('Меню', ['Bots'])), 'false'])
 expect(RuntimeError, tg.do_click(page, 'Нет такой'), 'нет под последним сообщением')
 assert page.selected == 0
 
-# успешный клик: клик по найденной кнопке, реакция по n+1
-el = FakeEl()
+# успешный клик: один evaluate нашёл и нажал кнопку (без пере-запроса DOM), реакция по контенту
 s1, s2 = st('Меню', ['Bots'], n=1), st('Раздел Bots', ['Back'], n=2)
-page = StubPage([j(s1), '0', j(s2)], [el])
+page = StubPage([j(s1), 'true', j(s2)])
 out = asyncio.run(tg.do_click(page, 'Bots'))
-assert out['text'] == s2['text'] and el.clicked == 1 and page.enters == 0
+assert out['text'] == s2['text'] and page.selected == 0 and page.enters == 0
 
 # send: не /-команда отвергается до касания страницы (предохранитель от живых людей)
 page = StubPage()
@@ -200,7 +191,7 @@ def run_open(pages):
 
     async def run():
         real_connect, real_kill = tg.connect, tg.kill_webk_workers
-        tg.connect, tg.kill_webk_workers = fake_connect, (lambda b: (killed.append(b), 2)[1])
+        tg.connect, tg.kill_webk_workers = fake_connect, (lambda b: (killed.append(b), (2, 2))[1])
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out):
@@ -247,7 +238,7 @@ assert dead.reloads == 0 and alive.reloads == 1  # reload только у фре
 
 # revive не спас: чистый SystemExit с числом убитых воркеров
 dead2, still = OpenPage(info=[oi('', 0)] * 15), OpenPage(info=[oi('', 0)] * 15)
-expect(SystemExit, lambda: run_open([dead2, still]), 'не ожил даже после kill 2 воркеров')
+expect(SystemExit, lambda: run_open([dead2, still]), 'не ожил даже после kill 2/2 воркеров')
 assert made[-1].stopped == 1  # фреш-сессия остановлена и на SystemExit-пути revive
 
 
@@ -283,16 +274,18 @@ assert not alive.info and alive.reloads == 0
 killed = []
 stuck = OpenPage(info=[oi('', 0)] * 8)
 fresh = OpenPage(info=[oi('', 0), oi('#x', 300)])
-(browser, page), bs = run_live([stuck, fresh], lambda b: (killed.append(b), 2)[1])
+(browser, page), bs = run_live([stuck, fresh], lambda b: (killed.append(b), (2, 2))[1])
 assert browser is bs[1] and page is fresh
 assert killed == ['http://127.0.0.1:9222'] and not stuck.info and fresh.reloads == 1
 
 
-# --- kill_webk_workers: /json/close только worker'ам webk; отказ CDP HTTP — SystemExit ---
+# --- kill_webk_workers: /json/close только worker'ам webk; ответ контролируется
+# живьём (200 + 'closing'); отказ CDP HTTP на /json/list — SystemExit ---
 
 class FakeResp:
-    def __init__(self, payload):
+    def __init__(self, payload, status=200):
         self.payload = payload
+        self.status = status
 
     def read(self):
         return self.payload
@@ -304,20 +297,22 @@ class FakeResp:
         return False
 
 
-calls = []
+workers = j([{'id': 'w1', 'type': 'shared_worker', 'url': 'https://web.telegram.org/k/worker.js'},
+             {'id': 'w2', 'type': 'shared_worker', 'url': 'https://web.telegram.org/k/worker.js'},
+             {'id': 'p1', 'type': 'page', 'url': 'https://web.telegram.org/k/'}])
+closes = {'w1': FakeResp(b'Target is closing'),  # честное закрытие
+          'w2': FakeResp(j({'error': 'not closable'}))}  # 200, но close не удался
 
 
 def fake_urlopen(url, timeout=None):
-    calls.append(url)
-    return FakeResp(j([{'id': 'w1', 'type': 'shared_worker', 'url': 'https://web.telegram.org/k/worker.js'},
-                       {'id': 'p1', 'type': 'page', 'url': 'https://web.telegram.org/k/'}]))
+    target = url.rsplit('/', 1)[-1]
+    return closes[target] if target in closes else FakeResp(workers)
 
 
 real_urlopen = urllib.request.urlopen
 urllib.request.urlopen = fake_urlopen
 try:
-    assert tg.kill_webk_workers('http://127.0.0.1:9222') == 1
-    assert calls == ['http://127.0.0.1:9222/json/list', 'http://127.0.0.1:9222/json/close/w1']
+    assert tg.kill_webk_workers('http://127.0.0.1:9222') == (1, 2)  # w2 закрыть не удалось — счёт честный
 
     def boom(url, timeout=None):
         raise urllib.error.URLError('refused')
