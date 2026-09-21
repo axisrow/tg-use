@@ -1,1 +1,7 @@
 __pycache__/
+
+# рабочие артефакты CLI: перезаписываются каждым save/test, при работе из клона
+# только мешают — в репо лежат примеры artifacts/*.example.json
+artifacts/flow.json
+artifacts/flow.md
+artifacts/report.json

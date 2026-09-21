@@ -142,7 +142,8 @@ def write_artifacts(flow: dict, d: str = ART) -> None:
 def cdp_alive() -> str:
     """Адрес живого браузера из CDP_FILE, если тот отвечает по HTTP, иначе ''."""
     try:
-        cdp = open(CDP_FILE).read().strip()
+        with open(CDP_FILE) as f:
+            cdp = f.read().strip()
     except OSError:
         return ''
     base = cdp.split('/devtools')[0].replace('ws', 'http', 1)
@@ -156,7 +157,8 @@ def cdp_alive() -> str:
 async def connect() -> BrowserSession:
     """Подключиться к браузеру, оставленному login (адрес в ~/.tg-use-cdp)."""
     try:
-        cdp = open(CDP_FILE).read().strip()
+        with open(CDP_FILE) as f:
+            cdp = f.read().strip()
     except FileNotFoundError:
         raise SystemExit('нет живого браузера: сначала python3 tg-use.py login')
     browser = BrowserSession(cdp_url=cdp)
@@ -239,7 +241,8 @@ async def cmd_login() -> None:
     try:
         page = await browser.must_get_current_page()
         await page.goto(TG_URL)
-        assert browser.cdp_url  # после start() адрес всегда есть; сужает тип для pyright
+        if not browser.cdp_url:  # явная проверка вместо assert: не отключается python -O
+            raise RuntimeError('браузер не отдал CDP-адрес после старта')
         with open(CDP_FILE, 'w') as f:
             f.write(browser.cdp_url)
         print(f'браузер {browser.cdp_url} — адрес записан в {CDP_FILE}; окно не закрывать до конца работы.')
@@ -442,7 +445,8 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
     if button and not from_id:  # иначе кнопка потерялась бы молча
         raise SystemExit('--button без --from: ребро некуда прикрепить')
     try:
-        flow = json.load(open(os.path.join(ART, 'flow.json')))
+        with open(os.path.join(ART, 'flow.json')) as f:
+            flow = json.load(f)
     except FileNotFoundError:
         flow = {'bot': bot, 'states': [], 'edges': []}
     if from_id and from_id[:8] not in {s['id'] for s in flow['states']}:
@@ -467,23 +471,34 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
 
 async def cmd_test(scenario_path: str) -> None:
     """Прогнать сценарий [{do, expect}] → artifacts/report.json; падение = exit 1."""
-    steps = json.load(open(scenario_path))
+    try:
+        with open(scenario_path) as f:
+            steps = json.load(f)
+    except OSError as e:
+        raise SystemExit(f'не удалось открыть {scenario_path}: {e}')
+    except json.JSONDecodeError as e:
+        raise SystemExit(f'битый {scenario_path}: {e}')
+    if not isinstance(steps, list) or not steps:  # пустой сценарий — не PASS за 0 шагов
+        raise SystemExit('сценарий: жду непустой список шагов [{"do": ..., "expect": ...}]')
+    for i, step in enumerate(steps):  # кривой сценарий = ошибка до подключения к браузеру
+        do = step.get('do', {}) if isinstance(step, dict) else None
+        if not isinstance(do, dict) or not ({'click', 'send'} >= set(do)):
+            raise SystemExit(f'шаг {i + 1}: жду {{"do": {{"click"/"send": ...}}}} или {{"do": {{}}}}')
+        if len(do) > 1:  # click+send вместе молча брал click
+            raise SystemExit(f'шаг {i + 1}: click и send вместе — жду что-то одно')
     browser, page = await live_page()
     results = []
     try:
         for i, step in enumerate(steps):
-            do = step.get('do', {})
+            do = step['do']
             t0 = time.monotonic()
-            error = ''
             try:
                 if 'click' in do:
                     st = shown(await do_click(page, do['click']))
                 elif 'send' in do:
                     st = shown(await do_send(page, do['send']))
-                elif not do:
-                    st = shown(await read_state(page))
                 else:
-                    raise RuntimeError(f'неизвестный шаг {json.dumps(do)}: жду {{"click"}} или {{"send"}}')
+                    st = shown(await read_state(page))
                 ok, why = check_expect(st['text'], step.get('expect'))
             except Exception as e:
                 ok, st, why = False, {'text': '', 'buttons': []}, f'{type(e).__name__}: {e}'
@@ -495,11 +510,11 @@ async def cmd_test(scenario_path: str) -> None:
                 break  # дальше сценарий бессмыслен: хрупкие шаги после сломанного врут
     finally:
         await browser.stop()
-    passed = all(r['pass'] for r in results)
-    os.makedirs(ART, exist_ok=True)
-    with open(os.path.join(ART, 'report.json'), 'w') as f:
-        json.dump({'scenario': os.path.basename(scenario_path), 'pass': passed, 'steps': results},
-                  f, ensure_ascii=False, indent=2)
+        passed = all(r['pass'] for r in results)  # в finally, чтобы report остался и по Ctrl+C
+        os.makedirs(ART, exist_ok=True)
+        with open(os.path.join(ART, 'report.json'), 'w') as f:
+            json.dump({'scenario': os.path.basename(scenario_path), 'pass': passed,
+                       'steps': results}, f, ensure_ascii=False, indent=2)
     print(f'итог: {"PASS" if passed else "FAIL"} ({len(results)} шагов) → {ART}/report.json')
     if not passed:
         raise SystemExit(1)

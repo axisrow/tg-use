@@ -127,6 +127,26 @@ with open('artifacts/flow.json', 'w') as f:
 expect(SystemExit, tg.cmd_save('zzzzzz', '', ''), 'нет такого состояния')
 
 
+# --- cmd_test: валидация сценария до подключения к браузеру (offline) ---
+
+tmp = tempfile.mkdtemp()
+
+
+def scenario_file(name, content):
+    path = os.path.join(tmp, name)
+    with open(path, 'w') as f:
+        f.write(content if isinstance(content, str) else json.dumps(content))
+    return path
+
+
+expect(SystemExit, tg.cmd_test(scenario_file('broken.json', '{не json')), 'битый')
+expect(SystemExit, tg.cmd_test(scenario_file('empty.json', [])), 'непустой список')
+expect(SystemExit, tg.cmd_test(scenario_file('notlist.json', {'do': {}})), 'непустой список')
+expect(SystemExit, tg.cmd_test(scenario_file('weird.json', [{'do': {'foo': 1}}])), 'жду {"do"')
+expect(SystemExit, tg.cmd_test(scenario_file('both.json', [{'do': {'click': 'X', 'send': '/x'}}])),
+       'что-то одно')
+
+
 # --- cmd_open: guard по hash (#@username), а не по display name из .chat-info ---
 
 def oi(h, body, title='LeadHunter (8602734479)'):
@@ -344,4 +364,4 @@ for name in ('test_skeleton.py', 'test_crawl.py'):
     src = open(os.path.join(here, name)).read()
     hits = [b for b in banned if b in src]
     assert not hits, f'{name}: unit-тест трогает дверь наружу: {hits}'
-print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers / cdp_alive')
+print('ok: do_click / do_send / wait_reaction / read_state / cmd_save / cmd_test (валидация сценария) / cmd_open (поиск+клик, guard, revive) / live_page / kill_webk_workers / cdp_alive')
