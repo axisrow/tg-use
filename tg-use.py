@@ -36,8 +36,11 @@ POLL = 2.5    # темп 2–3 c между действиями в чате
 WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
 OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
 DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
-             'yes', 'да,', 'turn on', 'turn off', 'enable', 'disable',
-             'включ', 'выключ')  # деструктив, подтверждения и переключатели настроек бота
+             'pay', 'оплат', 'buy', 'wallet', 'invoice',
+             'turn on', 'turn off', 'enable', 'disable',
+             'включ', 'выключ')  # деструктив, платежи (вне v1) и переключатели настроек бота
+DANGEROUS_WORDS = re.compile(r'\b(yes|да)\b')  # подтверждения — по границе слова:
+# подстрока 'yes' ловила 'eyes', а 'да,' — не ловила голое «Да» (issue #10)
 
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
@@ -50,16 +53,19 @@ JS_STATE = '''() => {
   return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length};
 }'''
 
-# индекс кнопки по подписи среди всех кнопок документа (для get_elements_by_css_selector)
-JS_FIND_BUTTON = '''(label) => {
-  const all = [...document.querySelectorAll('button.reply-markup-button')];
+# клик той же пробой, что нашла кнопку: между поиском и кликом DOM не пере-запрашивается,
+# так что бот не успеет переписать сообщение и увести клик в чужую кнопку
+JS_CLICK_BUTTON = '''(label) => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
   const last = bubbles[bubbles.length - 1];
   const btn = last && [...last.querySelectorAll('button.reply-markup-button')]
     .find(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim() === label);
-  if (!btn) return -1;
+  if (!btn) return false;
   btn.scrollIntoView({block: 'center'});
-  return all.indexOf(btn);
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    btn.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+  }
+  return true;
 }'''
 
 JS_TYPE = '''(text) => {
@@ -71,7 +77,8 @@ JS_TYPE = '''(text) => {
 
 
 def is_dangerous(label: str) -> bool:
-    return any(w in label.lower() for w in DANGEROUS)
+    label = label.lower()
+    return any(w in label for w in DANGEROUS) or bool(DANGEROUS_WORDS.search(label))
 
 
 def scrub(text: str) -> str:
@@ -188,11 +195,9 @@ async def do_click(page, label: str) -> dict:
     if is_dangerous(label):
         raise RuntimeError(f'«{label}» — опасная кнопка, CLI её не нажимает (deny-лист)')
     before = await read_state(page)
-    idx = json.loads(await page.evaluate(JS_FIND_BUTTON, label))
-    if idx < 0:
+    # evaluate питонизирует голые булевы (JS true → 'True'), это не JSON — json.loads падает
+    if (await page.evaluate(JS_CLICK_BUTTON, label)) != 'True':
         raise RuntimeError(f'кнопки «{label}» нет под последним сообщением бота')
-    button = (await page.get_elements_by_css_selector('button.reply-markup-button'))[idx]
-    await button.click()
     return await wait_reaction(page, before)
 
 
@@ -303,21 +308,31 @@ JS_CLICK_FOUND = '''(needle) => {
 }'''
 
 
-def kill_webk_workers(base: str) -> int:
+def kill_webk_workers(base: str) -> tuple[int, int]:
     """Убить shared-воркеры webk по CDP HTTP-базе (например http://127.0.0.1:9222).
     Их залипание = вечная загрузка вкладки; /json — единственная дверь к worker-таргетам.
-    ponytail: причина залипания не выяснена; если webk починят — просто удалить вызов."""
+    Ответ /json/close контролируем живьём (200 + 'Target is closing'): если для
+    worker-таргета close не сработал — честная деградация вместо молчаливого «успеха»,
+    revive держится и на reload, но счёт закрытых в отчёте правдивый.
+    ponytail: причина залипания не выяснена; если webk починят — просто удалить вызов.
+    Глубокая дверь (WS к worker-таргету) не нужна, пока revive спасается reload'ом."""
     try:
         with urllib.request.urlopen(base + '/json/list', timeout=5) as r:
             targets = json.load(r)
         ids = [t['id'] for t in targets
                if t.get('type') == 'shared_worker' and 'web.telegram.org' in t.get('url', '')]
-        for i in ids:
-            urllib.request.urlopen(f'{base}/json/close/{i}', timeout=5).read()
     except Exception as e:  # браузер висит — CDP HTTP может не ответить: чистый выход без traceback
         raise SystemExit(f'не удалось убить воркеры webk через {base} ({type(e).__name__}: {e}); '
                          f'ничего не отправлено')
-    return len(ids)
+    closed = 0
+    for i in ids:
+        try:
+            with urllib.request.urlopen(f'{base}/json/close/{i}', timeout=5) as r:
+                if r.status == 200 and 'closing' in r.read().decode('utf-8', 'replace').lower():
+                    closed += 1
+        except Exception:  # отказ отдельного close не валит revive — остаётся reload; счёт честный
+            pass
+    return closed, len(ids)
 
 
 async def wait_open(page, tries: int, want: str | tuple = ()) -> dict:
@@ -379,13 +394,14 @@ async def revive_page(browser) -> tuple:
     Сессия, пережившая залипание, отваливается от таргета и молча не делает reload."""
     await browser.stop()
     base = (browser.cdp_url or '').split('/devtools')[0].replace('ws', 'http', 1)
-    killed = kill_webk_workers(base)
+    closed, total = kill_webk_workers(base)
     browser = await connect()
     try:  # SystemExit не Exception: глотаем всё, но фреш-сессию останавливаем и перебрасываем
         page = await browser.must_get_current_page()
         await page.reload()
         if not (await wait_open(page, 15))['bodyLen']:  # перемонтаж занимает ~5 c — ждём честно
-            raise SystemExit(f'webk не ожил даже после kill {killed} воркеров + перезапуска сессии')
+            raise SystemExit(f'webk не ожил даже после kill {closed}/{total} воркеров + '
+                             f'перезапуска сессии')
         return browser, page
     except BaseException:
         await browser.stop()
