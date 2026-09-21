@@ -139,16 +139,17 @@ class OpenPage:
         self.reloads = 0
 
     async def evaluate(self, js, arg=None):
-        if '.chat-info' in js:  # JS_OPEN_INFO
+        # маршрутизация по константам модуля: правка селекторов в tg-use.py не ломает фейк
+        if js == tg.JS_OPEN_INFO:
             assert self.info, 'неожиданный JS_OPEN_INFO (лишняя проба)'
             return self.info.pop(0)
-        if 'chatlist-chat' in js:  # JS_CLICK_FOUND
+        if js == tg.JS_CLICK_FOUND:
             return self.found.pop(0)
-        if 'search-trigger' in js:  # JS_SEARCH_TRIGGER
-            return 'True'
-        if 'location.href' in js:
+        if js == tg.JS_SEARCH_TRIGGER:
+            return 'ok'
+        if 'location.href' in js:  # инлайн-проба, не константа
             return self.href
-        assert 'input-search-input' in js, 'неожиданный evaluate'  # JS_OPEN_SEARCH
+        assert js == tg.JS_OPEN_SEARCH, 'неожиданный evaluate: ' + js[:60]
         return '1' if self.has_search else '0'
 
     async def reload(self):

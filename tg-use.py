@@ -41,12 +41,12 @@ DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'пере
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
   const last = bubbles[bubbles.length - 1];
-  const bodyLen = document.body ? document.body.innerText.length : 0;  // 0 = UI не смонтирован
-  if (!last) return {text: '', buttons: [], bodyLen};
+  if (!last) return {text: '', buttons: [],
+                     bodyLen: document.body ? document.body.innerText.length : 0};
   const t = last.querySelector('.translatable-message') || last.querySelector('.message');
   const buttons = [...last.querySelectorAll('button.reply-markup-button')]
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
-  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length, bodyLen};
+  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length};
 }'''
 
 # индекс кнопки по подписи среди всех кнопок документа (для get_elements_by_css_selector)
@@ -139,7 +139,7 @@ async def read_state(page) -> dict:
     """Текст последнего сообщения бота + подписи кнопок (из живого чата).
     Несмонтированная страница ≠ пустой чат: честная ошибка вместо «бот молчит»."""
     st = json.loads(await page.evaluate(JS_STATE))
-    if not st.get('bodyLen'):
+    if not (st.get('bodyLen') or st.get('n')):  # нет сообщений И нет body → UI не смонтирован
         raise RuntimeError('страница webk не смонтирована (воркеры залипли?) — оживи: open @bot')
     return st
 
@@ -242,12 +242,13 @@ JS_SEARCH_TRIGGER = '''() => {
 }'''
 
 # строка результата поиска: при открытой панели видимые .chatlist-chat — только
-# результаты, но их текст содержит display name (BotFather | 8 576 822 users),
-# а не @username — матчим по имени бота. Полный набор mousedown/mouseup/click —
-# голый el.click() tweb-строку не открывает
+# результаты; их текст содержит display name (BotFather | 8 576 822 users), а не
+# @username — матчим нормализованно (не-буквоцифры в мусор): форматы различаются.
+# Полный набор mousedown/mouseup/click — голый el.click() tweb-строку не открывает
 JS_CLICK_FOUND = '''(needle) => {
+  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const el = [...document.querySelectorAll('.chatlist-chat')]
-    .find(e => e.offsetParent !== null && (e.innerText || '').toLowerCase().includes(needle));
+    .find(e => e.offsetParent !== null && norm(e.innerText).includes(norm(needle)));
   if (!el) return '';
   const peer = el.getAttribute('data-peer-id') || (el.getAttribute('href') || '').slice(1);
   for (const type of ['mousedown', 'mouseup', 'click']) {
@@ -316,14 +317,14 @@ async def cmd_open(bot: str) -> None:
         if not peer:
             raise SystemExit(f'чат {bot} не найден в диалогах webk (поиск по username); '
                              f'ничего не отправлено')
-        # tweb переписывает hash на #peerId (у ботов #<минус>peerId), #@username — ждём любой
-        st = await wait_open(page, 10, want=('#' + peer, '#-' + peer, '#@' + name.lower()))
+        # tweb переписывает hash на #peerId (у ботов #<минус>peerId) или #@username
+        wants = ('#' + peer, '#-' + peer, '#@' + name.lower())
+        await wait_open(page, 10, want=wants)
         await asyncio.sleep(OPEN_POLL)  # дать плашке чата устаканиться после закрытия поиска
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
     finally:
         await browser.stop()
-    if not (st['bodyLen'] and st['hash'].lower() in ('#' + peer.lower(), '#-' + peer.lower(),
-                                                     '#@' + name.lower())):
+    if not (st['bodyLen'] and st['hash'].lower() in wants):
         raise SystemExit(f'чат {bot} не открылся (hash: {st["hash"] or "пусто"}, '
                          f'заголовок: {st["title"] or "пусто"}); ничего не отправлено')
     print(json.dumps({'opened': bot, 'title': st['title'], 'hash': st['hash']}, ensure_ascii=False))
