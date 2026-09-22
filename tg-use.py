@@ -7,8 +7,8 @@
 используется — обход и выбор следующего шага делает харнес (см. SKILL.md).
 
 Безопасность: темп 2–3 c между действиями задаёт харнес между вызовами CLI;
-только диалоги с ботами; deny-лист мутационных кнопок; скраб токенов в каждом
-выводе; ~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
+только диалоги с ботами; скраб токенов в каждом выводе;
+~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
 """
 
 import os
@@ -33,10 +33,6 @@ ART = 'artifacts'  # артефакты: flow.json, flow.md, report.json
 POLL = 2.5    # темп 2–3 c между действиями в чате
 WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
 OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
-DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
-             'pay', 'оплат', 'buy', 'invoice')  # деструктив и платежи (вне v1)
-DANGEROUS_WORDS = re.compile(r'\b(yes|да)\b')  # подтверждения — по границе слова:
-# подстрока 'yes' ловила 'eyes', а 'да,' — не ловила голое «Да» (issue #10)
 
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
@@ -70,11 +66,6 @@ JS_TYPE = '''(text) => {
   field.focus();
   return 'typed:' + String(document.execCommand('insertText', false, text));
 }'''
-
-
-def is_dangerous(label: str) -> bool:
-    label = label.lower()
-    return any(w in label for w in DANGEROUS) or bool(DANGEROUS_WORDS.search(label))
 
 
 def scrub(text: str) -> str:
@@ -189,9 +180,7 @@ async def wait_reaction(page, before: dict) -> dict:
 
 
 async def do_click(page, label: str) -> dict:
-    """Нажать кнопку по подписи и вернуть новое состояние; отказ по deny-листу и промаху."""
-    if is_dangerous(label):
-        raise RuntimeError(f'«{label}» — опасная кнопка, CLI её не нажимает (deny-лист)')
+    """Нажать кнопку по подписи и вернуть новое состояние; промах — ошибка ребра."""
     before = await read_state(page)
     # evaluate питонизирует голые булевы (JS true → 'True'), это не JSON — json.loads падает
     if (await page.evaluate(JS_CLICK_BUTTON, label)) != 'True':
@@ -201,9 +190,6 @@ async def do_click(page, label: str) -> dict:
 
 async def do_send(page, text: str) -> dict:
     """Отправить команду в поле ввода и вернуть новое состояние."""
-    # ponytail: только команды на / — предохранитель от сообщений живым людям; убрать, если боту нужен текст
-    if not text.startswith('/'):
-        raise RuntimeError('send: только команды на /')
     before = await read_state(page)
     typed = await page.evaluate(JS_TYPE, text)
     if typed != 'typed:true':
@@ -546,7 +532,7 @@ def main() -> None:
             asyncio.run(cmd_save(args.from_id, args.button, args.bot))
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
-    except RuntimeError as e:  # ошибка руки (deny-лист, промах кнопки, нет реакции) — не traceback
+    except RuntimeError as e:  # ошибка руки (промах кнопки, нет реакции) — не traceback
         raise SystemExit(f'ошибка: {e}')
 
 

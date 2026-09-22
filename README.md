@@ -53,7 +53,7 @@ Browser Harness из коробки цепляется к обычному Chrom
 | `tg-use.py login` | headed-браузер с persistent-профилем; адрес → `~/.tg-use-cdp` |
 | `tg-use.py open <@bot>` | открыть чат бота: поиск webk по username + клик по результату, guard по peer-id в hash; без отправок |
 | `tg-use.py state` | JSON: текст последнего сообщения бота + подписи кнопок |
-| `tg-use.py click "<label>"` | нажать inline-кнопку, вернуть новое состояние; deny-лист и отсутствие кнопки/реакции = ошибка (exit 1) |
+| `tg-use.py click "<label>"` | нажать inline-кнопку, вернуть новое состояние; отсутствие кнопки/реакции = ошибка (exit 1) |
 | `tg-use.py save [--from id --button label] [--bot @name]` | дописать состояние/ребро в `artifacts/flow.json` + `artifacts/flow.md` (Mermaid) |
 | `tg-use.py test scenario.json` | шаги `{"do": {"send"/"click"}, "expect": {"contains"/"regex"}}` → `artifacts/report.json`; падение = exit 1 |
 

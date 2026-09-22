@@ -49,11 +49,6 @@ def expect(exc_type, fn, fragment):
     raise AssertionError(f'ожидали {exc_type.__name__} с {fragment!r}, не дождались')
 
 
-# deny-лист: отказ до первого касания страницы
-page = StubPage()
-expect(RuntimeError, tg.do_click(page, 'Yes, delete it'), 'deny')
-assert not page.evals
-
 # промах кнопки: JS-клик не нашёл кнопку ('False'), страница больше не трогается
 page = StubPage([j(st('Меню', ['Bots'])), 'False'])
 expect(RuntimeError, tg.do_click(page, 'Нет такой'), 'нет под последним сообщением')
@@ -64,11 +59,6 @@ s1, s2 = st('Меню', ['Bots'], n=1), st('Раздел Bots', ['Back'], n=2)
 page = StubPage([j(s1), 'True', j(s2)])
 out = asyncio.run(tg.do_click(page, 'Bots'))
 assert out['text'] == s2['text'] and page.enters == 0
-
-# send: не /-команда отвергается до касания страницы (предохранитель от живых людей)
-page = StubPage()
-expect(RuntimeError, tg.do_send(page, 'привет'), 'только команды')
-assert not page.evals
 
 # send: успех — вставка текста и Enter
 s3 = st('Ответ бота', n=3)
