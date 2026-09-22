@@ -13,8 +13,6 @@
 
 import os
 
-os.environ.setdefault('BROWSER_USE_LOGGING_LEVEL', 'warning')  # до импорта: чистый CLI-вывод
-
 import argparse
 import asyncio
 import hashlib
@@ -36,9 +34,7 @@ POLL = 2.5    # темп 2–3 c между действиями в чате
 WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
 OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
 DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
-             'pay', 'оплат', 'buy', 'wallet', 'invoice',
-             'turn on', 'turn off', 'enable', 'disable',
-             'включ', 'выключ')  # деструктив, платежи (вне v1) и переключатели настроек бота
+             'pay', 'оплат', 'buy', 'invoice')  # деструктив и платежи (вне v1)
 DANGEROUS_WORDS = re.compile(r'\b(yes|да)\b')  # подтверждения — по границе слова:
 # подстрока 'yes' ловила 'eyes', а 'да,' — не ловила голое «Да» (issue #10)
 
@@ -125,17 +121,17 @@ def check_expect(text: str, expect: dict | None) -> tuple[bool, str]:
     return True, ''
 
 
-def write_artifacts(flow: dict, d: str = ART) -> None:
+def write_artifacts(flow: dict) -> None:
     """flow.json + flow.md (Mermaid); перезаписывается целиком после каждого save."""
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, 'flow.json'), 'w') as f:
+    os.makedirs(ART, exist_ok=True)
+    with open(os.path.join(ART, 'flow.json'), 'w') as f:
         json.dump(flow, f, ensure_ascii=False, indent=2)
     lines = ['flowchart TD']
     for st in flow['states']:
         lines.append(f'    {st["id"]}["{esc(st["text"])}"]')
     for e in flow['edges']:
         lines.append(f'    {e["from"]} -->|"{esc(e["button"], 25)}"| {e["to"]}')
-    with open(os.path.join(d, 'flow.md'), 'w') as f:
+    with open(os.path.join(ART, 'flow.md'), 'w') as f:
         f.write('# flow\n\n```mermaid\n' + '\n'.join(lines) + '\n```\n')
 
 
@@ -291,7 +287,6 @@ JS_OPEN_SEARCH = '''(query) => {
 JS_SEARCH_TRIGGER = '''() => {
   const t = document.querySelector('.sidebar-header-search-trigger');
   if (t) t.click();
-  return !!t;
 }'''
 
 # строка результата поиска: при открытой панели видимые .chatlist-chat — только
@@ -338,16 +333,16 @@ def kill_webk_workers(base: str) -> tuple[int, int]:
     return closed, len(ids)
 
 
-async def wait_open(page, tries: int, want: str | tuple = ()) -> dict:
-    """Смонтированность UI; при want (str/кортеж) — ждать hash из want (чат открыт)."""
-    wants = tuple(w.lower() for w in ((want,) if isinstance(want, str) else want))
+async def wait_open(page, tries: int, want: tuple = ()) -> dict:
+    """Смонтированность UI; при want — ждать hash из want (чат открыт)."""
+    wants = tuple(w.lower() for w in want)
     st = {}
     for _ in range(tries):
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
         if st['bodyLen'] and (not wants or st['hash'].lower() in wants):
             return st
         await asyncio.sleep(OPEN_POLL)
-    return st or {'hash': '', 'title': '', 'bodyLen': 0}
+    return st
 
 
 async def cmd_open(bot: str) -> None:
