@@ -20,19 +20,13 @@ tg.OPEN_POLL = 0.01  # и паузу проб open — иначе revive-тес�
 class StubPage:
     """Страница-заглушка: evaluate отдаёт ответы по очереди; лишнее касание = падение теста."""
 
-    def __init__(self, evals=(), elements=()):
+    def __init__(self, evals=()):
         self.evals = list(evals)
-        self.elements = list(elements)
-        self.selected = 0
         self.enters = 0
 
     async def evaluate(self, js, arg=None):
         assert self.evals, 'неожиданный вызов evaluate (лишнее касание страницы)'
         return self.evals.pop(0)
-
-    async def get_elements_by_css_selector(self, sel):
-        self.selected += 1
-        return self.elements
 
     async def press(self, key):
         self.enters += 1
@@ -55,28 +49,16 @@ def expect(exc_type, fn, fragment):
     raise AssertionError(f'ожидали {exc_type.__name__} с {fragment!r}, не дождались')
 
 
-# deny-лист: отказ до первого касания страницы
-page = StubPage()
-expect(RuntimeError, tg.do_click(page, 'Yes, delete it'), 'deny')
-expect(RuntimeError, tg.do_click(page, 'Включить'), 'deny')
-assert not page.evals and page.selected == 0
-
 # промах кнопки: JS-клик не нашёл кнопку ('False'), страница больше не трогается
 page = StubPage([j(st('Меню', ['Bots'])), 'False'])
 expect(RuntimeError, tg.do_click(page, 'Нет такой'), 'нет под последним сообщением')
-assert page.selected == 0
 
 # успешный клик: один evaluate нашёл и нажал кнопку ('True' — питонизированный булев),
 # без пере-запроса DOM; реакция по контенту
 s1, s2 = st('Меню', ['Bots'], n=1), st('Раздел Bots', ['Back'], n=2)
 page = StubPage([j(s1), 'True', j(s2)])
 out = asyncio.run(tg.do_click(page, 'Bots'))
-assert out['text'] == s2['text'] and page.selected == 0 and page.enters == 0
-
-# send: не /-команда отвергается до касания страницы (предохранитель от живых людей)
-page = StubPage()
-expect(RuntimeError, tg.do_send(page, 'привет'), 'только команды')
-assert not page.evals
+assert out['text'] == s2['text'] and page.enters == 0
 
 # send: успех — вставка текста и Enter
 s3 = st('Ответ бота', n=3)
@@ -149,19 +131,19 @@ expect(SystemExit, tg.cmd_test(scenario_file('both.json', [{'do': {'click': 'X',
 
 # --- cmd_open: guard по hash (#@username), а не по display name из .chat-info ---
 
-def oi(h, body, title='LeadHunter (8602734479)'):
+def oi(h, body):
     """Ответ JS_OPEN_INFO: display name без username — ровно кейс @leadhunter_..._bot."""
-    return j({'hash': h, 'title': title, 'bodyLen': body})
+    return j({'hash': h, 'title': 'LeadHunter (8602734479)', 'bodyLen': body})
 
 
 class OpenPage:
     """Страница для cmd_open: evaluate маршрутизируется по содержимому JS-сниппета."""
 
-    def __init__(self, info=(), found=(), has_search=True, href='https://web.telegram.org/k/'):
+    def __init__(self, info=(), found=(), has_search=True):
         self.info = list(info)
         self.found = list(found)  # ответы JS_CLICK_FOUND: peer-id или ''
         self.has_search = has_search
-        self.href = href
+        self.href = 'https://web.telegram.org/k/'
         self.reloads = 0
 
     async def evaluate(self, js, arg=None):
@@ -227,7 +209,7 @@ def run_open(pages):
 # поиск нашёл чат: клик по результату → hash переписан на peer-id → PASS
 # (третья проба — финальная перечитка плашки после закрытия поиска)
 page = OpenPage(info=[oi('#-old', 300), oi('#8602734479', 300),
-                      oi('#8602734479', 300, title='LeadHunter (8602734479)')],
+                      oi('#8602734479', 300)],
                 found=['8602734479'])
 out, browsers, killed = run_open([page])
 assert out['opened'] == '@leadhunter_8602734479_bot' and out['hash'] == '#8602734479'
@@ -250,7 +232,7 @@ expect(SystemExit, lambda: run_open([page]), 'нет поля поиска')
 dead = OpenPage(info=[oi('', 0)] * 15)
 alive = OpenPage(info=[oi('#', 200),  # wait_open внутри revive_page: UI ожил
                        oi('#8602734479', 200),
-                       oi('#8602734479', 300, title='LeadHunter (8602734479)')],
+                       oi('#8602734479', 300)],
                  found=['8602734479'])
 out, browsers, killed = run_open([dead, alive])
 assert out['opened'] == '@leadhunter_8602734479_bot'
@@ -345,9 +327,10 @@ assert open('artifacts/report.json').read() == report_before
 # живьём (200 + 'closing'); отказ CDP HTTP на /json/list — SystemExit ---
 
 class FakeResp:
-    def __init__(self, payload, status=200):
+    status = 200
+
+    def __init__(self, payload):
         self.payload = payload
-        self.status = status
 
     def read(self):
         return self.payload

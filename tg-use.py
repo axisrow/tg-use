@@ -7,13 +7,11 @@
 используется — обход и выбор следующего шага делает харнес (см. SKILL.md).
 
 Безопасность: темп 2–3 c между действиями задаёт харнес между вызовами CLI;
-только диалоги с ботами; deny-лист мутационных кнопок; скраб токенов в каждом
-выводе; ~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
+только диалоги с ботами; скраб токенов в каждом выводе;
+~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
 """
 
 import os
-
-os.environ.setdefault('BROWSER_USE_LOGGING_LEVEL', 'warning')  # до импорта: чистый CLI-вывод
 
 import argparse
 import asyncio
@@ -35,12 +33,6 @@ ART = 'artifacts'  # артефакты: flow.json, flow.md, report.json
 POLL = 2.5    # темп 2–3 c между действиями в чате
 WAIT = 12.0   # потолок ожидания реакции бота после клика/отправки
 OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
-DANGEROUS = ('delete', 'удал', 'transfer', 'revoke', 'отзыв', 'переда',
-             'pay', 'оплат', 'buy', 'wallet', 'invoice',
-             'turn on', 'turn off', 'enable', 'disable',
-             'включ', 'выключ')  # деструктив, платежи (вне v1) и переключатели настроек бота
-DANGEROUS_WORDS = re.compile(r'\b(yes|да)\b')  # подтверждения — по границе слова:
-# подстрока 'yes' ловила 'eyes', а 'да,' — не ловила голое «Да» (issue #10)
 
 JS_STATE = '''() => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
@@ -74,11 +66,6 @@ JS_TYPE = '''(text) => {
   field.focus();
   return 'typed:' + String(document.execCommand('insertText', false, text));
 }'''
-
-
-def is_dangerous(label: str) -> bool:
-    label = label.lower()
-    return any(w in label for w in DANGEROUS) or bool(DANGEROUS_WORDS.search(label))
 
 
 def scrub(text: str) -> str:
@@ -125,17 +112,17 @@ def check_expect(text: str, expect: dict | None) -> tuple[bool, str]:
     return True, ''
 
 
-def write_artifacts(flow: dict, d: str = ART) -> None:
+def write_artifacts(flow: dict) -> None:
     """flow.json + flow.md (Mermaid); перезаписывается целиком после каждого save."""
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, 'flow.json'), 'w') as f:
+    os.makedirs(ART, exist_ok=True)
+    with open(os.path.join(ART, 'flow.json'), 'w') as f:
         json.dump(flow, f, ensure_ascii=False, indent=2)
     lines = ['flowchart TD']
     for st in flow['states']:
         lines.append(f'    {st["id"]}["{esc(st["text"])}"]')
     for e in flow['edges']:
         lines.append(f'    {e["from"]} -->|"{esc(e["button"], 25)}"| {e["to"]}')
-    with open(os.path.join(d, 'flow.md'), 'w') as f:
+    with open(os.path.join(ART, 'flow.md'), 'w') as f:
         f.write('# flow\n\n```mermaid\n' + '\n'.join(lines) + '\n```\n')
 
 
@@ -193,9 +180,7 @@ async def wait_reaction(page, before: dict) -> dict:
 
 
 async def do_click(page, label: str) -> dict:
-    """Нажать кнопку по подписи и вернуть новое состояние; отказ по deny-листу и промаху."""
-    if is_dangerous(label):
-        raise RuntimeError(f'«{label}» — опасная кнопка, CLI её не нажимает (deny-лист)')
+    """Нажать кнопку по подписи и вернуть новое состояние; промах — ошибка ребра."""
     before = await read_state(page)
     # evaluate питонизирует голые булевы (JS true → 'True'), это не JSON — json.loads падает
     if (await page.evaluate(JS_CLICK_BUTTON, label)) != 'True':
@@ -205,9 +190,6 @@ async def do_click(page, label: str) -> dict:
 
 async def do_send(page, text: str) -> dict:
     """Отправить команду в поле ввода и вернуть новое состояние."""
-    # ponytail: только команды на / — предохранитель от сообщений живым людям; убрать, если боту нужен текст
-    if not text.startswith('/'):
-        raise RuntimeError('send: только команды на /')
     before = await read_state(page)
     typed = await page.evaluate(JS_TYPE, text)
     if typed != 'typed:true':
@@ -291,7 +273,6 @@ JS_OPEN_SEARCH = '''(query) => {
 JS_SEARCH_TRIGGER = '''() => {
   const t = document.querySelector('.sidebar-header-search-trigger');
   if (t) t.click();
-  return !!t;
 }'''
 
 # строка результата поиска: при открытой панели видимые .chatlist-chat — только
@@ -338,16 +319,16 @@ def kill_webk_workers(base: str) -> tuple[int, int]:
     return closed, len(ids)
 
 
-async def wait_open(page, tries: int, want: str | tuple = ()) -> dict:
-    """Смонтированность UI; при want (str/кортеж) — ждать hash из want (чат открыт)."""
-    wants = tuple(w.lower() for w in ((want,) if isinstance(want, str) else want))
+async def wait_open(page, tries: int, want: tuple = ()) -> dict:
+    """Смонтированность UI; при want — ждать hash из want (чат открыт)."""
+    wants = tuple(w.lower() for w in want)
     st = {}
     for _ in range(tries):
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
         if st['bodyLen'] and (not wants or st['hash'].lower() in wants):
             return st
         await asyncio.sleep(OPEN_POLL)
-    return st or {'hash': '', 'title': '', 'bodyLen': 0}
+    return st
 
 
 async def cmd_open(bot: str) -> None:
@@ -551,7 +532,7 @@ def main() -> None:
             asyncio.run(cmd_save(args.from_id, args.button, args.bot))
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
-    except RuntimeError as e:  # ошибка руки (deny-лист, промах кнопки, нет реакции) — не traceback
+    except RuntimeError as e:  # ошибка руки (промах кнопки, нет реакции) — не traceback
         raise SystemExit(f'ошибка: {e}')
 
 
