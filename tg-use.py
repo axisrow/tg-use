@@ -258,8 +258,10 @@ JS_OPEN_INFO = '''() => {
           bodyLen: document.body ? document.body.innerText.length : 0};  // 0 = не смонтирован
 }'''
 
-# локальный поиск: панель может быть свёрнута (querySelector хватает скрытого
-# поля-двойника) — берём только видимое поле; если панель закрыта, открывает триггер.
+# поиск: панель может быть свёрнута (querySelector хватает скрытого поля-двойника) —
+# берём только видимое поле; если панель закрыта, открывает триггер. После вставки
+# webk реагирует только на input-событие, само значение поля не триггерит выдачу
+# (проверено живьём: текст в поле есть, список не фильтруется).
 JS_OPEN_SEARCH = '''(query) => {
   const fields = [...document.querySelectorAll('.input-search-input')]
     .filter(e => e.offsetParent !== null);
@@ -267,6 +269,7 @@ JS_OPEN_SEARCH = '''(query) => {
   fields[0].focus();
   fields[0].value = '';  // без очистки старый запрос глушит новый ввод
   document.execCommand('insertText', false, query);
+  fields[0].dispatchEvent(new InputEvent('input', {bubbles: true}));
   return 1;
 }'''
 
@@ -275,13 +278,13 @@ JS_SEARCH_TRIGGER = '''() => {
   if (t) t.click();
 }'''
 
-# строка результата поиска: при открытой панели видимые .chatlist-chat — только
-# результаты; их текст содержит display name (BotFather | 8 576 822 users), а не
-# @username — матчим нормализованно (не-буквоцифры в мусор): форматы различаются.
-# Полный набор mousedown/mouseup/click — голый el.click() tweb-строку не открывает
+# строка результата поиска: локальные совпадения — .chatlist-chat, глобальный поиск
+# (бот вне диалогов) — a.rp.row; у обоих есть data-peer-id, а текст содержит display
+# name (Dr.Web | @DrWebBot), не @username — матчим нормализованно (не-буквоцифры в
+# мусор). Полный набор mousedown/mouseup/click — голый el.click() строку не открывает
 JS_CLICK_FOUND = '''(needle) => {
   const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const el = [...document.querySelectorAll('.chatlist-chat')]
+  const el = [...document.querySelectorAll('a.rp.row, .chatlist-chat')]
     .find(e => e.offsetParent !== null && norm(e.innerText).includes(norm(needle)));
   if (!el) return '';
   const peer = el.getAttribute('data-peer-id') || (el.getAttribute('href') || '').slice(1);
