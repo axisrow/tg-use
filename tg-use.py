@@ -261,7 +261,8 @@ JS_OPEN_INFO = '''() => {
 # поиск: панель может быть свёрнута (querySelector хватает скрытого поля-двойника) —
 # берём только видимое поле; если панель закрыта, открывает триггер. После вставки
 # webk реагирует только на input-событие, само значение поля не триггерит выдачу
-# (проверено живьём: текст в поле есть, список не фильтруется).
+# (проверено живьём: текст в поле есть, список не фильтруется); явный диспетч
+# дублирует native input от execCommand — для поискового поля безвредно (дебаунс).
 JS_OPEN_SEARCH = '''(query) => {
   const fields = [...document.querySelectorAll('.input-search-input')]
     .filter(e => e.offsetParent !== null);
@@ -280,12 +281,18 @@ JS_SEARCH_TRIGGER = '''() => {
 
 # строка результата поиска: локальные совпадения — .chatlist-chat, глобальный поиск
 # (бот вне диалогов) — a.rp.row; у обоих есть data-peer-id, а текст содержит display
-# name (Dr.Web | @DrWebBot), не @username — матчим нормализованно (не-буквоцифры в
-# мусор). Полный набор mousedown/mouseup/click — голый el.click() строку не открывает
+# name (Dr.Web | @DrWebBot), не @username. Сначала строка с точным @username в тексте
+# (lookahead отсекает @GameBotNews при поиске gamebot), фолбэк — нормализованная
+# подстрока (не-буквоцифры в мусор) для строк без username в тексте; needle проходит
+# [A-Za-z0-9_] в cmd_open — метасимволов regex в нём нет. Полный набор
+# mousedown/mouseup/click — голый el.click() строку не открывает
 JS_CLICK_FOUND = '''(needle) => {
   const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const el = [...document.querySelectorAll('a.rp.row, .chatlist-chat')]
-    .find(e => e.offsetParent !== null && norm(e.innerText).includes(norm(needle)));
+  const rows = [...document.querySelectorAll('a.rp.row, .chatlist-chat')]
+    .filter(e => e.offsetParent !== null);
+  const exact = new RegExp('@' + needle.toLowerCase() + '(?![a-z0-9_])');
+  const el = rows.find(e => exact.test(e.innerText.toLowerCase()))
+          || rows.find(e => norm(e.innerText).includes(norm(needle)));
   if (!el) return '';
   const peer = el.getAttribute('data-peer-id') || (el.getAttribute('href') || '').slice(1);
   for (const type of ['mousedown', 'mouseup', 'click']) {
@@ -361,7 +368,7 @@ async def cmd_open(bot: str) -> None:
                 break
             await asyncio.sleep(OPEN_POLL)
         if not peer:
-            raise SystemExit(f'чат {bot} не найден в диалогах webk (поиск по username); '
+            raise SystemExit(f'чат {bot} не найден через поиск webk по username; '
                              f'ничего не отправлено')
         # tweb переписывает hash на #peerId (у ботов #<минус>peerId) или #@username
         wants = ('#' + peer, '#-' + peer, '#@' + name.lower())
