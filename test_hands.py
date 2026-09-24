@@ -232,7 +232,8 @@ page = OpenPage(info=[oi('#-old', 300)], has_search=False)
 expect(SystemExit, lambda: run_open([page]), 'нет поля поиска')
 
 # поиск webk глух к синтетике после старта браузера (2026-09-24): CLI будит поле
-# настоящей клавишей (Backspace: значение не меняет, но событие — доверенное)
+# настоящей клавишей (Backspace: стирает последний символ, input-событие от
+# реального удаления — доверенное, им и будим)
 class DeafPage(OpenPage):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
