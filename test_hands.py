@@ -217,7 +217,7 @@ assert page.found == [] and page.reloads == 0 and browsers[0].stopped == 1 and k
 
 # результатов нет (username не в диалогах) — чистый SystemExit, ничего не отправлено
 page = OpenPage(info=[oi('#-old', 300)], found=[''] * 10)
-expect(SystemExit, lambda: run_open([page]), 'не найден в диалогах')
+expect(SystemExit, lambda: run_open([page]), 'не найден через поиск')
 
 # клик был, но hash на peer-id не переписался → чистый SystemExit
 page = OpenPage(info=[oi('#-old', 300)] + [oi('#-old', 300)] * 10 + [oi('#-old', 300)],
