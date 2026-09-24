@@ -163,6 +163,9 @@ class OpenPage:
     async def reload(self):
         self.reloads += 1
 
+    async def press(self, key):
+        pass
+
 
 class FakeBrowser:
     cdp_url = 'ws://127.0.0.1:9222/devtools/browser/x'  # ws→http даст base 127.0.0.1:9222
@@ -227,6 +230,24 @@ expect(SystemExit, lambda: run_open([page]), 'не открылся')
 # нет поля поиска webk → чистый SystemExit
 page = OpenPage(info=[oi('#-old', 300)], has_search=False)
 expect(SystemExit, lambda: run_open([page]), 'нет поля поиска')
+
+# поиск webk глух к синтетике после старта браузера (2026-09-24): CLI будит поле
+# настоящей клавишей (Backspace: значение не меняет, но событие — доверенное)
+class DeafPage(OpenPage):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.pressed = []
+
+    async def press(self, key):
+        self.pressed.append(key)
+        self.found.insert(0, '8602734479')  # после будки поиск оживает
+
+page = DeafPage(info=[oi('#-old', 300), oi('#8602734479', 300),
+                      oi('#8602734479', 300)],
+                found=[''] * 10)
+out, browsers, killed = run_open([page])
+assert page.pressed == ['Backspace'] and page.found == [''] * 10
+assert out['opened'] == '@leadhunter_8602734479_bot' and out['hash'] == '#8602734479'
 
 # revive: 15 проб мёртвого UI → kill(base) → фреш-сессия → reload → wait_open revive_page → поиск → клик
 dead = OpenPage(info=[oi('', 0)] * 15)

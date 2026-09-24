@@ -361,6 +361,9 @@ async def cmd_open(bot: str) -> None:
             await asyncio.sleep(OPEN_POLL)
             if not json.loads(await page.evaluate(JS_OPEN_SEARCH, name)):
                 raise SystemExit('нет поля поиска webk; ничего не отправлено')
+        await page.press('Backspace')  # будка: webk после старта глух к синтетике
+        # (наблюдено 2026-09-24): одна настоящая клавиша CDP будит поле; она же
+        # стирает последний символ вставки — итоговое значение не меняет
         peer = ''
         for _ in range(10):  # ~20 c: индекс/рендер результатов
             peer = (await page.evaluate(JS_CLICK_FOUND, name.lower())) or ''
