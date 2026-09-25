@@ -270,7 +270,9 @@ JS_OPEN_SEARCH = '''(query) => {
   if (!fields.length) return 0;
   fields[0].focus();
   fields[0].value = '';  // без очистки старый запрос глушит новый ввод
-  document.execCommand('insertText', false, query);
+  // хвостовой пробел — жертва будки: Backspace в cmd_open стирает только его,
+  // в поле остаётся полный query; без него будка съедает последний символ запроса
+  document.execCommand('insertText', false, query + ' ');
   fields[0].dispatchEvent(new InputEvent('input', {bubbles: true}));
   return 1;
 }'''
@@ -364,8 +366,8 @@ async def cmd_open(bot: str) -> None:
                 raise SystemExit('нет поля поиска webk; ничего не отправлено')
         await page.press('Backspace')  # будка: webk после старта глух к синтетике
         # (наблюдено 2026-09-24): настоящая клавиша CDP будит поле input-событием
-        # от удаления последнего символа; ищет webk по обрезанному запросу — строку
-        # всё равно находит JS_CLICK_FOUND по полному username, не найдётся — exit 1
+        # от удаления последнего символа; жертва будки — хвостовой пробел из
+        # JS_OPEN_SEARCH, в поле остаётся полный query, не найдётся — exit 1
         peer = ''
         for _ in range(10):  # ~20 c: индекс/рендер результатов
             peer = (await page.evaluate(JS_CLICK_FOUND, name.lower())) or ''
