@@ -25,6 +25,8 @@ class StubPage:
         self.enters = 0
 
     async def evaluate(self, js, arg=None):
+        if 'toggle-reply-markup' in js:  # read_state-тумблер: в этих тестах панель открыта
+            return 'open'
         assert self.evals, 'неожиданный вызов evaluate (лишнее касание страницы)'
         return self.evals.pop(0)
 
@@ -73,6 +75,11 @@ page = StubPage([j(s1), 'typed:true', j(s3)])
 out = asyncio.run(tg.do_send(page, '/start'))
 assert out['text'] == s3['text'] and page.enters == 1
 
+# send: свободный текст (не только /) — опросники проходимы тем же путём
+page = StubPage([j(s1), 'typed:true', j(s3)])
+out = asyncio.run(tg.do_send(page, 'привет'))
+assert out['text'] == s3['text'] and page.enters == 1
+
 # send: поле не приняло текст
 page = StubPage([j(s1), 'typed:false'])
 expect(RuntimeError, tg.do_send(page, '/start'), 'не удалось ввести')
@@ -104,6 +111,25 @@ assert out['text'] == '' and out['bodyLen'] == 300
 # read_state: reply-клавиатура проходит в состояние отдельной секцией reply_buttons
 out = asyncio.run(tg.read_state(StubPage([j(st('Выберите язык', reply_buttons=['Русский', 'English']))])))
 assert out['reply_buttons'] == ['Русский', 'English']
+
+# webk прячет reply-клавиатуру за тумблером: read_state сам разворачивает панель —
+# иначе reply_buttons всегда пустые (наблюдено: drwebbot, manybot)
+class CollapsedReplyPage(StubPage):
+    """JS_STATE без тумблера отдаёт пустую reply-секцию; клик тумблера её монтирует."""
+
+    def __init__(self):
+        self.toggled = False
+
+    async def evaluate(self, js, arg=None):
+        if 'toggle-reply-markup' in js:
+            self.toggled = True
+            return 'toggled'
+        assert js == tg.JS_STATE, 'неожиданный evaluate: ' + js[:60]
+        return j(st('Welcome', reply_buttons=['English'] if self.toggled else []))
+
+page = CollapsedReplyPage()
+out = asyncio.run(tg.read_state(page))
+assert page.toggled and out['reply_buttons'] == ['English']
 
 # open: кривой username — отказ до connect (валидация формата, offline)
 expect(SystemExit, tg.cmd_open('bad name!'), 'жду username')
