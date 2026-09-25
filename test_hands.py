@@ -32,8 +32,15 @@ class StubPage:
         self.enters += 1
 
 
-def st(text, buttons=(), n=1):
-    return {'text': text, 'buttons': list(buttons), 'n': n, 'bodyLen': 10}
+def st(text, buttons=(), n=1, reply_buttons=()):
+    return {'text': text, 'buttons': list(buttons), 'reply_buttons': list(reply_buttons),
+            'n': n, 'bodyLen': 10}
+
+
+# красно-зелёная привязка фейка к пробам: без reply-секции в JS_STATE/JS_CLICK_BUTTON
+# (селектор панели .reply-keyboard) тест ниже валился бы, а не «зеленел» впустую
+assert 'reply-keyboard' in tg.JS_STATE, 'JS_STATE не видит reply-клавиатуру'
+assert 'reply-keyboard' in tg.JS_CLICK_BUTTON, 'JS_CLICK_BUTTON не ищет reply-клавиатуру'
 
 
 def j(v):
@@ -93,6 +100,10 @@ expect(RuntimeError, tg.read_state(StubPage([j({'text': '', 'buttons': [], 'body
 # read_state: смонтированная страница без входящих — пустое состояние, не ошибка
 out = asyncio.run(tg.read_state(StubPage([j({'text': '', 'buttons': [], 'bodyLen': 300})])))
 assert out['text'] == '' and out['bodyLen'] == 300
+
+# read_state: reply-клавиатура проходит в состояние отдельной секцией reply_buttons
+out = asyncio.run(tg.read_state(StubPage([j(st('Выберите язык', reply_buttons=['Русский', 'English']))])))
+assert out['reply_buttons'] == ['Русский', 'English']
 
 # open: кривой username — отказ до connect (валидация формата, offline)
 expect(SystemExit, tg.cmd_open('bad name!'), 'жду username')

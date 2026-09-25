@@ -35,14 +35,21 @@ WAIT = 12.0   # потолок ожидания реакции бота посл
 OPEN_POLL = 2.0  # пауза между пробами монтирования webk в wait_open
 
 JS_STATE = '''() => {
+  // reply-клавиатура — нижняя панель .reply-keyboard: кнопки там те же
+  // button.reply-markup-button (tweb replyKeyboard.tsx). Панель висит в DOM
+  // постоянно (display:none без клавиатуры, кнопки остаются после закрытия) —
+  // offsetParent берёт только живую видимую панель
+  const reply = [...document.querySelectorAll('.reply-keyboard button.reply-markup-button')]
+    .filter(b => b.offsetParent !== null)
+    .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
   const last = bubbles[bubbles.length - 1];
-  if (!last) return {text: '', buttons: [],
+  if (!last) return {text: '', buttons: [], reply_buttons: reply,
                      bodyLen: document.body ? document.body.innerText.length : 0};
   const t = last.querySelector('.translatable-message') || last.querySelector('.message');
   const buttons = [...last.querySelectorAll('button.reply-markup-button')]
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
-  return {text: (t ? t.innerText : '').trim(), buttons, n: bubbles.length};
+  return {text: (t ? t.innerText : '').trim(), buttons, reply_buttons: reply, n: bubbles.length};
 }'''
 
 # клик той же пробой, что нашла кнопку: между поиском и кликом DOM не пере-запрашивается,
@@ -50,8 +57,12 @@ JS_STATE = '''() => {
 JS_CLICK_BUTTON = '''(label) => {
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
   const last = bubbles[bubbles.length - 1];
-  const btn = last && [...last.querySelectorAll('button.reply-markup-button')]
-    .find(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim() === label);
+  const byLabel = b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim() === label;
+  const btn = (last && [...last.querySelectorAll('button.reply-markup-button')].find(byLabel))
+    // reply-клавиатура: та же проба без пере-запроса DOM; offsetParent отсекает
+    // панель-двойник display:none (кнопки в ней остаются после закрытия)
+    || [...document.querySelectorAll('.reply-keyboard button.reply-markup-button')]
+         .filter(b => b.offsetParent !== null).find(byLabel);
   if (!btn) return false;
   btn.scrollIntoView({block: 'center'});
   for (const type of ['mousedown', 'mouseup', 'click']) {
@@ -185,7 +196,7 @@ async def do_click(page, label: str) -> dict:
     before = await read_state(page)
     # evaluate питонизирует голые булевы (JS true → 'True'), это не JSON — json.loads падает
     if (await page.evaluate(JS_CLICK_BUTTON, label)) != 'True':
-        raise RuntimeError(f'кнопки «{label}» нет под последним сообщением бота')
+        raise RuntimeError(f'кнопки «{label}» нет под последним сообщением и на reply-клавиатуре')
     return await wait_reaction(page, before)
 
 
@@ -528,7 +539,7 @@ def main() -> None:
     p_open = sub.add_parser('open', help='открыть чат бота: поиск webk по username + клик, guard по peer-id hash, без отправок')
     p_open.add_argument('bot', help='бот в форме @name')
     sub.add_parser('state', help='JSON: последнее сообщение бота + подписи кнопок')
-    p_click = sub.add_parser('click', help='нажать inline-кнопку по подписи (пустая реакция = ошибка ребра)')
+    p_click = sub.add_parser('click', help='нажать кнопку по подписи (inline или reply-клавиатура; пустая реакция = ошибка ребра)')
     p_click.add_argument('label')
     p_save = sub.add_parser('save', help='дописать состояние/ребро в artifacts/flow.json + flow.md')
     p_save.add_argument('--from', dest='from_id', default='', help='id состояния, из которого вышло ребро')
