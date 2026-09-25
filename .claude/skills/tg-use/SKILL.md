@@ -30,7 +30,8 @@ description: Снятие структуры меню Telegram-ботов и п�
 Цикл, каждый шаг — вызов CLI; темп задаёшь ты: пауза 2–3 c между вызовами.
 Ошибка «страница webk не смонтирована» — повтори `open @bot`.
 
-1. `tg-use.py state` → JSON `{id, text, buttons}`.
+1. `tg-use.py state` → JSON `{id, text, buttons, reply_buttons}` (reply_buttons —
+   нижняя reply-клавиатура бота; click жмёт и её кнопки).
 2. `tg-use.py save --bot @bot` — первое состояние (корень); дальше
    `save --from <id> --button "<label>"`.
 3. Выбери кнопку сам; лучше
