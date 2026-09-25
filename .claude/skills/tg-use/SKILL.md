@@ -49,7 +49,8 @@ description: Снятие структуры меню Telegram-ботов и п�
 Сохрани `artifacts/<bot>.scenario.json`:
 `[{"do": {"send": "/mybots"} | {"click": "<label>"}, "expect": {"contains"|"regex": "..."}}]`
 и прогони: `tg-use.py test artifacts/<bot>.scenario.json` → `artifacts/report.json`
-(pass/fail по шагам + латентность), падение = exit 1.
+(pass/fail по шагам + латентность), падение = exit 1. `send` шлёт любой текст
+в диалог бота, не только `/`-команды — свободный ввод опросников проходит им.
 
 ## Правила безопасности (не упрощать)
 
