@@ -78,6 +78,18 @@ JS_TYPE = '''(text) => {
   return 'typed:' + String(document.execCommand('insertText', false, text));
 }'''
 
+# reply-клавиатура webk свёрнута по умолчанию: кнопки попадают в DOM только после
+# клика по тумблеру у поля ввода (наблюдено живьём: drwebbot, manybot)
+JS_TOGGLE_REPLY = '''() => {
+  if (document.querySelector('.reply-keyboard')) return 'open';
+  const t = document.querySelector('.btn-icon.toggle-reply-markup');
+  if (!t) return 'no-toggle';
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    t.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+  }
+  return 'toggled';
+}'''
+
 
 def scrub(text: str) -> str:
     """Затереть секреты (токены ботов вида 1234567890:AA...) перед выводом/записью в артефакты."""
@@ -168,9 +180,17 @@ async def connect() -> BrowserSession:
     return browser
 
 
+async def ensure_reply_keyboard(page) -> None:
+    """Развернуть свёрнутую webk reply-клавиатуру, чтобы state/click видели кнопки;
+    панель уже открыта или тумблера нет — no-op."""
+    if (await page.evaluate(JS_TOGGLE_REPLY)) == 'toggled':
+        await asyncio.sleep(OPEN_POLL)  # панель монтируется асинхронно
+
+
 async def read_state(page) -> dict:
     """Текст последнего сообщения бота + подписи кнопок (из живого чата).
     Несмонтированная страница ≠ пустой чат: честная ошибка вместо «бот молчит»."""
+    await ensure_reply_keyboard(page)
     st = json.loads(await page.evaluate(JS_STATE))
     if not (st.get('bodyLen') or st.get('n')):  # нет сообщений И нет body → UI не смонтирован
         raise RuntimeError('страница webk не смонтирована (воркеры залипли?) — оживи: open @bot')
@@ -201,7 +221,7 @@ async def do_click(page, label: str) -> dict:
 
 
 async def do_send(page, text: str) -> dict:
-    """Отправить команду в поле ввода и вернуть новое состояние."""
+    """Отправить текст или команду в поле ввода и вернуть новое состояние."""
     before = await read_state(page)
     typed = await page.evaluate(JS_TYPE, text)
     if typed != 'typed:true':
