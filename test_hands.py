@@ -240,8 +240,9 @@ expect(SystemExit, lambda: run_open([page]), 'нет поля поиска')
 # настоящей клавишей (Backspace: input-событие от реального удаления — доверенное,
 # им и будим; жертва будки — хвостовой пробел вставки, в поле остаётся полный query)
 class DeafPage(OpenPage):
-    """Поле как браузер: вставка фиксированного JS_OPEN_SEARCH кладёт query с
-    хвостовым пробелом, press стирает последний символ."""
+    """Поле как браузер: вставка повторяет фактический текст JS_OPEN_SEARCH
+    (пробел берём из него — откат фикса в tg-use.py тест ловит), press
+    стирает последний символ."""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
@@ -250,7 +251,7 @@ class DeafPage(OpenPage):
 
     async def evaluate(self, js, arg=None):
         if js == tg.JS_OPEN_SEARCH:
-            self.field = arg + ' '  # вставка query + ' ' из фиксированного JS
+            self.field = arg + (' ' if "query + ' '" in js else '')  # хвост из фактического JS, не константа фейка
             return '1'
         return await super().evaluate(js, arg)
 
