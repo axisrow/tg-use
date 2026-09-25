@@ -108,6 +108,11 @@ with open('artifacts/flow.json', 'w') as f:
                'edges': []}, f)
 expect(SystemExit, tg.cmd_save('zzzzzz', '', ''), 'нет такого состояния')
 
+# save: битый flow.json — чистый SystemExit, не traceback (хвост эпика #15)
+with open('artifacts/flow.json', 'w') as f:
+    f.write('{не json')
+expect(SystemExit, tg.cmd_save('', '', ''), 'битый artifacts/flow.json')
+
 
 # --- cmd_test: валидация сценария до подключения к браузеру (offline) ---
 

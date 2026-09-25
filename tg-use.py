@@ -135,7 +135,8 @@ def cdp_alive() -> str:
         return ''
     base = cdp.split('/devtools')[0].replace('ws', 'http', 1)
     try:
-        urllib.request.urlopen(base + '/json/version', timeout=3).read()
+        with urllib.request.urlopen(base + '/json/version', timeout=3) as r:
+            r.read()
     except Exception:  # файл протух или браузер умер
         return ''
     return cdp
@@ -444,6 +445,8 @@ async def cmd_save(from_id: str, button: str, bot: str) -> None:
             flow = json.load(f)
     except FileNotFoundError:
         flow = {'bot': bot, 'states': [], 'edges': []}
+    except json.JSONDecodeError as e:  # битый flow = чистый отказ, не traceback
+        raise SystemExit(f'битый {ART}/flow.json: {e}')
     if from_id and from_id[:8] not in {s['id'] for s in flow['states']}:
         # опечатка в id = висячее ребро и битая ссылка в Mermaid; проверяем до подключения к браузеру
         raise SystemExit(f'--from {from_id[:8]}: нет такого состояния в {ART}/flow.json')
