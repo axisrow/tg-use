@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import time
 import urllib.request
 
@@ -621,7 +622,9 @@ def main() -> None:
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
         elif args.cmd == 'skill-install':
-            repo = os.path.dirname(os.path.abspath(__file__))
+            # argv[0], не __file__: __file__ — это tg_use/__init__.py (каталог пакета),
+            # а репо-корень с .claude/ — там, где лежит запущенный скрипт-шим
+            repo = os.path.dirname(os.path.abspath(sys.argv[0]))
             dst = install_skill(repo, os.path.expanduser('~'))
             print(f'скилл установлен: {dst}; переустанови после обновлений репо')
     except RuntimeError as e:  # ошибка руки (промах кнопки, нет реакции) — не traceback

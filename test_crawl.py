@@ -45,4 +45,14 @@ assert 'tg-use state' in pkgtext  # команды — консольный ск
 assert 'python3 tg-use.py' not in pkgtext  # не осталось репо-формы
 assert open(os.path.join(repo, '.claude', 'skills', 'tg-use', 'SKILL.md')).read() == \
     open(os.path.join(repo, 'tg_use', 'SKILL.md')).read()  # копия в пакете не отстала
-print('ok: state_key / esc / write_artifacts / install_skill')
+# main() должен передавать install_skill репо-корень (argv[0] шима), а не каталог
+# пакета: `python3 tg-use.py skill-install` из репо обязан дать repo-режим
+# (абсолютные пути), а не пакетный (голый tg-use, которого нет на PATH)
+import subprocess
+import sys
+tmp_home = tempfile.mkdtemp()
+subprocess.run([sys.executable, os.path.join(repo, 'tg-use.py'), 'skill-install'],
+               env=dict(os.environ, HOME=tmp_home), check=True, capture_output=True)
+reinstalled = open(os.path.join(tmp_home, '.claude', 'skills', 'tg-use', 'SKILL.md')).read()
+assert f'python3 {os.path.join(repo, "tg-use.py")}' in reinstalled
+print('ok: state_key / esc / write_artifacts / install_skill / skill-install из репо')
