@@ -90,6 +90,18 @@ JS_TOGGLE_REPLY = '''() => {
   return 'toggled';
 }'''
 
+# панель reply-клавиатуры переживает смену чата: после open клик схлопывает
+# пережитую, read_state развернёт уже для нового чата (иначе чужие reply_buttons —
+# дефект найден живой приёмкой #31: в чате drwebbot светились кнопки manybot)
+JS_COLLAPSE_REPLY = '''() => {
+  const t = document.querySelector('.btn-icon.toggle-reply-markup');
+  if (!t) return 'no-toggle';
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    t.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+  }
+  return 'toggled';
+}'''
+
 
 def scrub(text: str) -> str:
     """Затереть секреты (токены ботов вида 1234567890:AA...) перед выводом/записью в артефакты."""
@@ -413,6 +425,7 @@ async def cmd_open(bot: str) -> None:
         await wait_open(page, 10, want=wants)
         await asyncio.sleep(OPEN_POLL)  # дать плашке чата устаканиться после закрытия поиска
         st = json.loads(await page.evaluate(JS_OPEN_INFO))
+        await page.evaluate(JS_COLLAPSE_REPLY)  # пережитая панель: чужие reply_buttons
     finally:
         await browser.stop()
     if not (st['bodyLen'] and st['hash'].lower() in wants):

@@ -187,12 +187,16 @@ class OpenPage:
         self.has_search = has_search
         self.href = 'https://web.telegram.org/k/'
         self.reloads = 0
+        self.toggles = 0  # клики тумблера reply-панели из cmd_open
 
     async def evaluate(self, js, arg=None):
         # маршрутизация по константам модуля: правка селекторов в tg-use.py не ломает фейк
         if js == tg.JS_OPEN_INFO:
             assert self.info, 'неожиданный JS_OPEN_INFO (лишняя проба)'
             return self.info.pop(0)
+        if 'toggle-reply-markup' in js:  # cmd_open схлопывает панель пережитого чата
+            self.toggles += 1
+            return 'toggled'
         if js == tg.JS_CLICK_FOUND:
             return self.found.pop(0)
         if js == tg.JS_SEARCH_TRIGGER:
@@ -259,6 +263,7 @@ page = OpenPage(info=[oi('#-old', 300), oi('#8602734479', 300),
 out, browsers, killed = run_open([page])
 assert out['opened'] == '@leadhunter_8602734479_bot' and out['hash'] == '#8602734479'
 assert page.found == [] and page.reloads == 0 and browsers[0].stopped == 1 and killed == []
+assert page.toggles == 1  # панель пережитого чата схлопнута при open (дефект #31)
 
 # результатов нет (username не в диалогах) — чистый SystemExit, ничего не отправлено
 page = OpenPage(info=[oi('#-old', 300)], found=[''] * 10)
