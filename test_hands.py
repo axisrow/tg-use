@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 
 _spec = importlib.util.spec_from_file_location(
-    'tg_use', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg-use.py'))
+    'tg_use', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg_use', '__init__.py'))
 tg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tg)
 tg.WAIT, tg.POLL = 0.2, 0.05  # ускоренный таймаут тишины — тест не ждёт 12 c

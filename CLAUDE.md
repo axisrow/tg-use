@@ -10,7 +10,8 @@ tg-use — тестировщик Telegram-ботов через web.telegram.or
 стратегии, запреты в коде, LLM в CLI, не-боты (группы/живые люди), скриншоты, webz/
 headless/мультиаккаунты, всё «на будущее».
 
-Весь CLI — один файл `tg-use.py` («руки»: login/open/state/click/save/test); тырк-тырк
+Весь CLI — модуль `tg_use/__init__.py` («руки»: login/open/state/click/save/test;
+`tg-use.py` в корне — шим запуска); тырк-тырк
 и вердикт — работа модели харнеса по скиллу `.claude/skills/tg-use/SKILL.md`.
 Единственная runtime-зависимость — browser-use, всё остальное — stdlib. Правила кода —
 в AGENTS.md (лесенка ponytail: есть в кодовой базе? → stdlib? → платформа? → одна
@@ -66,6 +67,7 @@ python3 tg-use.py test scenario.json  # сценарий [{"do": {"send"/"click"
                                       # → artifacts/report.json; FAIL = exit 1 (вне МВП)
 python3 tg-use.py skill-install       # скилл tg-use → ~/.claude/skills/tg-use (глобально агенту);
                                       # путь к CLI вшивается абсолютный; переустановка после обновлений
+python3 -m build && twine check dist/*  # колесо для PyPI (один раз: pip3 install build twine)
 ```
 
 Категории тестов/команд (граница — цена ошибки): unit — три offline-скрипта,

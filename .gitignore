@@ -1,4 +1,7 @@
 __pycache__/
+build/
+dist/
+*.egg-info/
 
 # рабочие артефакты CLI: перезаписываются каждым save/test, при работе из клона
 # только мешают — в репо лежат примеры artifacts/*.example.json
