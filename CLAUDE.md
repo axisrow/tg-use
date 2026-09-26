@@ -64,6 +64,8 @@ python3 tg-use.py click "<label>"     # нажать inline-кнопку → н�
 python3 tg-use.py save [--from id --button label] [--bot @name]  # дописать artifacts/flow.json + flow.md (вне МВП)
 python3 tg-use.py test scenario.json  # сценарий [{"do": {"send"/"click"}, "expect": {"contains"/"regex"}}]
                                       # → artifacts/report.json; FAIL = exit 1 (вне МВП)
+python3 tg-use.py skill-install       # скилл tg-use → ~/.claude/skills/tg-use (глобально агенту);
+                                      # путь к CLI вшивается абсолютный; переустановка после обновлений
 ```
 
 Категории тестов/команд (граница — цена ошибки): unit — три offline-скрипта,
