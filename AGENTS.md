@@ -28,6 +28,7 @@
 - В CLI нет обращений к внешним моделям: мозг — модель харнеса, который запускает
   CLI (режим `Agent(task=..., llm=...)` и LLM-контуры отвергнуты владельцем
   2026-09-20; browser-use — только библиотека браузера `BrowserSession`).
-- `tg-use.py` — весь CLI, один файл: login/open/state/click/save/test. Обход и выбор
+- Код CLI — пакет `tg_use` (весь код в `tg_use/__init__.py`); `tg-use.py` в корне —
+  шим для `python3 tg-use.py`. Команды: login/open/state/click/save/test. Обход и выбор
   следующего шага — работа харнеса (скилл `.claude/skills/tg-use/SKILL.md`).
 - Абстракций «на будущее», обёрток над browser-use и конфиг-фреймворков не заводить.

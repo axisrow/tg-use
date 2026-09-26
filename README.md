@@ -23,11 +23,17 @@ browser-use умеет работать двумя способами, и раз
 
 ## Установка
 
+Из клона:
+
 ```sh
 pip3 install -r requirements.txt          # в прокси-окружении: env -u ALL_PROXY -u all_proxy pip3 ...
 python3 -m playwright install chromium
 browser-use skill install                 # подключить браузер к харнесу
 ```
+
+Из PyPI (Python ≥3.11): `pipx install tg-use` — те же команды без `python3 tg-use.py`:
+`tg-use login`, `tg-use open <@bot>`, `tg-use state`, …; `tg-use skill-install`
+ставит скилл агенту (команды в нём переписываются на `tg-use`).
 
 ## Логин
 

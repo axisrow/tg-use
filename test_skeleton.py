@@ -2,7 +2,7 @@
 import importlib.util
 import os
 
-spec = importlib.util.spec_from_file_location('tg_use', 'tg-use.py')
+spec = importlib.util.spec_from_file_location('tg_use', 'tg_use/__init__.py')
 assert spec and spec.loader
 tg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tg)
@@ -28,7 +28,7 @@ assert tg.reaction_seen(grown, a, tg.reaction_key(grown))  # две подряд
 assert not tg.reaction_seen({'text': 'a', 'buttons': ['b'], 'n': 0}, a, tg.reaction_key(grown))  # n не вырос
 
 # в CLI не осталось обращений к внешним моделям (критерий приёмки эпика)
-src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg-use.py')).read()
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg_use', '__init__.py')).read()
 for banned in ('ChatAnthropic', 'ChatOpenAI', 'ChatBrowserUse', 'fallback_llm', 'llm_timeout',
                'Agent(', 'api_key', 'API_KEY', 'base_url', 'z.ai', 'openai', 'anthropic'):
     assert banned not in src, f'в CLI осталось обращение к модели: {banned}'

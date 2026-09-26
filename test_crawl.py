@@ -5,7 +5,7 @@ import os
 import tempfile
 
 _spec = importlib.util.spec_from_file_location(
-    'tg_use', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg-use.py'))
+    'tg_use', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tg_use', '__init__.py'))
 tg_use = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tg_use)
 esc, state_key, write_artifacts = tg_use.esc, tg_use.state_key, tg_use.write_artifacts
@@ -29,7 +29,9 @@ assert json.load(open('artifacts/flow.json')) == flow
 md = open('artifacts/flow.md').read()
 assert 'a1b2c3d4["Меню"]' in md and 'a1b2c3d4 -->|"Bots"| e5f6a7b8' in md and md.count('```mermaid') == 1
 
-# install_skill: копия SKILL.md в ~/.claude/skills/tg-use/ с абсолютным путём к CLI
+# install_skill: копия SKILL.md в ~/.claude/skills/tg-use/. Репо-режим: команды
+# переписываются на абсолютный путь к CLI. Пакет-режим (pip install): источник —
+# SKILL.md внутри пакета, команды — консольный скрипт tg-use.
 repo = os.path.dirname(os.path.abspath(__file__))
 home = tempfile.mkdtemp()
 dst = tg_use.install_skill(repo, home)
@@ -37,4 +39,10 @@ assert dst == os.path.join(home, '.claude', 'skills', 'tg-use', 'SKILL.md')
 installed = open(dst).read()
 assert f'python3 {os.path.join(repo, "tg-use.py")}' in installed  # CLI достижим из любой папки
 assert installed.startswith('---')  # frontmatter скилла не тронут
+pkgdst = tg_use.install_skill(os.path.join(repo, 'tg_use'), tempfile.mkdtemp())
+pkgtext = open(pkgdst).read()
+assert 'tg-use state' in pkgtext  # команды — консольный скрипт пакета
+assert 'python3 tg-use.py' not in pkgtext  # не осталось репо-формы
+assert open(os.path.join(repo, '.claude', 'skills', 'tg-use', 'SKILL.md')).read() == \
+    open(os.path.join(repo, 'tg_use', 'SKILL.md')).read()  # копия в пакете не отстала
 print('ok: state_key / esc / write_artifacts / install_skill')

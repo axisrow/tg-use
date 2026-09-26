@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg-use"
+dynamic = ["version"]
+description = "Руки для агент-харнеса: тестирование Telegram-ботов через web.telegram.org (CLI без LLM)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<4.0"
+dependencies = ["browser-use>=0.13.8"]
+authors = [{ name = "axisrow" }]
+
+[project.urls]
+Homepage = "https://github.com/axisrow/tg-use"
+
+[project.scripts]
+tg-use = "tg_use:main"
+
+[tool.setuptools]
+packages = ["tg_use"]
+
+[tool.setuptools.package-data]
+tg_use = ["SKILL.md"]
+
+[tool.setuptools.dynamic]
+version = { attr = "tg_use.__version__" }
