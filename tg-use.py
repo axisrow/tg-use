@@ -161,6 +161,21 @@ def write_artifacts(flow: dict) -> None:
         f.write('# flow\n\n```mermaid\n' + '\n'.join(lines) + '\n```\n')
 
 
+def install_skill(repo_dir: str, home: str) -> str:
+    """Поставить скилл tg-use агенту: копия SKILL.md в ~/.claude/skills/tg-use/ с
+    абсолютным путём к CLI — команды скилла работают из любой директории.
+    → путь установки (переустанавливай после обновлений репо)."""
+    with open(os.path.join(repo_dir, '.claude', 'skills', 'tg-use', 'SKILL.md')) as f:
+        text = f.read()
+    text = text.replace('python3 tg-use.py', f'python3 {os.path.join(repo_dir, "tg-use.py")}')
+    dst_dir = os.path.join(home, '.claude', 'skills', 'tg-use')
+    os.makedirs(dst_dir, exist_ok=True)
+    dst = os.path.join(dst_dir, 'SKILL.md')
+    with open(dst, 'w') as f:
+        f.write(text)
+    return dst
+
+
 def cdp_alive() -> str:
     """Адрес живого браузера из CDP_FILE, если тот отвечает по HTTP, иначе ''."""
     try:
@@ -580,6 +595,7 @@ def main() -> None:
     p_save.add_argument('--bot', default='', help='имя бота (только для первого save)')
     p_test = sub.add_parser('test', help='прогнать сценарий → artifacts/report.json (fail = exit 1)')
     p_test.add_argument('scenario', help='JSON: [{"do": {"click"/"send": ...}, "expect": {"contains"/"regex": ...}}]')
+    sub.add_parser('skill-install', help='поставить скилл tg-use агенту (~/.claude/skills/tg-use); переустанавливай после обновлений репо')
     args = parser.parse_args()
 
     try:
@@ -595,6 +611,10 @@ def main() -> None:
             asyncio.run(cmd_save(args.from_id, args.button, args.bot))
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
+        elif args.cmd == 'skill-install':
+            repo = os.path.dirname(os.path.abspath(__file__))
+            dst = install_skill(repo, os.path.expanduser('~'))
+            print(f'скилл установлен: {dst}; переустанови после обновлений репо')
     except RuntimeError as e:  # ошибка руки (промах кнопки, нет реакции) — не traceback
         raise SystemExit(f'ошибка: {e}')
 

@@ -28,4 +28,13 @@ write_artifacts(flow)
 assert json.load(open('artifacts/flow.json')) == flow
 md = open('artifacts/flow.md').read()
 assert 'a1b2c3d4["Меню"]' in md and 'a1b2c3d4 -->|"Bots"| e5f6a7b8' in md and md.count('```mermaid') == 1
-print('ok: state_key / esc / write_artifacts')
+
+# install_skill: копия SKILL.md в ~/.claude/skills/tg-use/ с абсолютным путём к CLI
+repo = os.path.dirname(os.path.abspath(__file__))
+home = tempfile.mkdtemp()
+dst = tg_use.install_skill(repo, home)
+assert dst == os.path.join(home, '.claude', 'skills', 'tg-use', 'SKILL.md')
+installed = open(dst).read()
+assert f'python3 {os.path.join(repo, "tg-use.py")}' in installed  # CLI достижим из любой папки
+assert installed.startswith('---')  # frontmatter скилла не тронут
+print('ok: state_key / esc / write_artifacts / install_skill')
