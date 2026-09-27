@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import tempfile
 
 _spec = importlib.util.spec_from_file_location(
@@ -39,7 +40,9 @@ assert dst == os.path.join(home, '.claude', 'skills', 'tg-use', 'SKILL.md')
 installed = open(dst).read()
 assert f'python3 {os.path.join(repo, "tg-use.py")}' in installed  # CLI достижим из любой папки
 assert installed.startswith('---')  # frontmatter скилла не тронут
-pkgdst = tg_use.install_skill(os.path.join(repo, 'tg_use'), tempfile.mkdtemp())
+pkg_dir = tempfile.mkdtemp()  # фейковый site-packages/tg_use: SKILL.md внутри, .claude/ нигде выше
+shutil.copy(os.path.join(repo, 'tg_use', 'SKILL.md'), os.path.join(pkg_dir, 'SKILL.md'))
+pkgdst = tg_use.install_skill(pkg_dir, tempfile.mkdtemp())
 pkgtext = open(pkgdst).read()
 assert 'tg-use state' in pkgtext  # команды — консольный скрипт пакета
 assert 'python3 tg-use.py' not in pkgtext  # не осталось репо-формы
@@ -55,4 +58,25 @@ subprocess.run([sys.executable, os.path.join(repo, 'tg-use.py'), 'skill-install'
                env=dict(os.environ, HOME=tmp_home), check=True, capture_output=True)
 reinstalled = open(os.path.join(tmp_home, '.claude', 'skills', 'tg-use', 'SKILL.md')).read()
 assert f'python3 {os.path.join(repo, "tg-use.py")}' in reinstalled
+
+# ревью #35: раскладка не должна зависеть от argv[0] — консольный скрипт venv
+# получает argv[0]=.../bin/tg-use, и на таком repo_dir установка падала
+# FileNotFoundError. Фейковый venv: bin/tg-use + site-packages/tg_use, ни
+# одного .claude/ по дереву вверх
+fake = tempfile.mkdtemp()
+site_pkg = os.path.join(fake, 'lib', 'python3.12', 'site-packages', 'tg_use')
+os.makedirs(site_pkg)
+shutil.copy(os.path.join(repo, 'tg_use', '__init__.py'), os.path.join(site_pkg, '__init__.py'))
+shutil.copy(os.path.join(repo, 'tg_use', 'SKILL.md'), os.path.join(site_pkg, 'SKILL.md'))
+os.makedirs(os.path.join(fake, 'bin'))
+with open(os.path.join(fake, 'bin', 'tg-use'), 'w') as f:
+    f.write('from tg_use import main\nmain()\n')
+venv_home = tempfile.mkdtemp()
+r = subprocess.run([sys.executable, os.path.join(fake, 'bin', 'tg-use'), 'skill-install'],
+                   env=dict(os.environ, PYTHONPATH=os.path.dirname(site_pkg), HOME=venv_home),
+                   capture_output=True, text=True)
+assert r.returncode == 0, f'консольный скрипт упал: {r.stderr[-400:]}'
+venv_skill = open(os.path.join(venv_home, '.claude', 'skills', 'tg-use', 'SKILL.md')).read()
+assert 'tg-use state' in venv_skill  # пакетный режим для консольного скрипта
+assert f'python3 {os.path.join(repo, "tg-use.py")}' not in venv_skill
 print('ok: state_key / esc / write_artifacts / install_skill / skill-install из репо')
