@@ -168,11 +168,22 @@ def install_skill(repo_dir: str, home: str) -> str:
     командами под этот способ установки — репо: абсолютный путь к CLI рядом,
     pip-пакет: консольный скрипт tg-use. → путь установки (переустанавливай
     после обновлений)."""
-    src = os.path.join(repo_dir, '.claude', 'skills', 'tg-use', 'SKILL.md')
-    if os.path.exists(src):  # репо: CLI лежит рядом — команды на абсолютный путь
+    # repo_dir — каталог пакета (dirname(__file__)): в репо .claude/ лежит выше,
+    # в pip-установке её нет нигде по дереву вверх — тогда SKILL.md берём из пакета
+    root, src = repo_dir, None
+    while True:
+        cand = os.path.join(root, '.claude', 'skills', 'tg-use', 'SKILL.md')
+        if os.path.exists(cand):
+            src = cand
+            break
+        parent = os.path.dirname(root)
+        if parent == root:
+            break
+        root = parent
+    if src:  # репо: CLI (шим) лежит в корне рядом — команды на абсолютный путь
         with open(src) as f:
             text = f.read()
-        text = text.replace('python3 tg-use.py', f'python3 {os.path.join(repo_dir, "tg-use.py")}')
+        text = text.replace('python3 tg-use.py', f'python3 {os.path.join(root, "tg-use.py")}')
     else:  # пакет (pip install): SKILL.md внутри пакета, CLI — скрипт tg-use на PATH
         with open(os.path.join(repo_dir, 'SKILL.md')) as f:
             text = f.read()
@@ -621,6 +632,8 @@ def main() -> None:
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
         elif args.cmd == 'skill-install':
+            # раскладку определяет положение модуля, не точка входа: у шима,
+            # консольного скрипта и -m один __file__ (каталог пакета)
             repo = os.path.dirname(os.path.abspath(__file__))
             dst = install_skill(repo, os.path.expanduser('~'))
             print(f'скилл установлен: {dst}; переустанови после обновлений репо')
