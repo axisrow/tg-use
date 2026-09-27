@@ -1,0 +1,15 @@
+{
+  "name": "tg-use",
+  "description": "Тестирование Telegram-ботов руками CLI tg-use: вердикт «работает / не работает» и почему.",
+  "owner": { "name": "axisrow", "url": "https://github.com/axisrow" },
+  "plugins": [
+    {
+      "name": "tg-use",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "Тестирование Telegram-ботов через web.telegram.org: CLI tg-use — руки, модель харнеса — мозг; вердикт «работает / не работает».",
+      "author": { "name": "axisrow" },
+      "keywords": ["telegram", "bots", "testing"]
+    }
+  ]
+}
