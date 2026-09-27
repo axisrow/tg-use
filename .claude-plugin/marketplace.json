@@ -6,6 +6,7 @@
     {
       "name": "tg-use",
       "source": "./",
+      "skills": ["./tg_use"],
       "version": "0.1.0",
       "description": "Тестирование Telegram-ботов через web.telegram.org: CLI tg-use — руки, модель харнеса — мозг; вердикт «работает / не работает».",
       "author": { "name": "axisrow" },

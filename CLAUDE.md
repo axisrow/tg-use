@@ -12,7 +12,8 @@ headless/мультиаккаунты, всё «на будущее».
 
 Весь CLI — модуль `tg_use/__init__.py` («руки»: login/open/state/click/save/test;
 `tg-use.py` в корне — шим запуска); тырк-тырк
-и вердикт — работа модели харнеса по скиллу `.claude/skills/tg-use/SKILL.md`.
+и вердикт — работа модели харнеса по скиллу `tg_use/SKILL.md` (источник истины
+один: тот же файл едет в колесе и отдаётся плагину-маркетплейсу).
 Единственная runtime-зависимость — browser-use, всё остальное — stdlib. Правила кода —
 в AGENTS.md (лесенка ponytail: есть в кодовой базе? → stdlib? → платформа? → одна
 строка? и только потом минимум; абстракций «на будущее», обёрток над browser-use и
@@ -66,7 +67,7 @@ python3 tg-use.py save [--from id --button label] [--bot @name]  # дописа�
 python3 tg-use.py test scenario.json  # сценарий [{"do": {"send"/"click"}, "expect": {"contains"/"regex"}}]
                                       # → artifacts/report.json; FAIL = exit 1 (вне МВП)
 python3 tg-use.py skill-install       # скилл tg-use → ~/.claude/skills/tg-use (глобально агенту);
-                                      # путь к CLI вшивается абсолютный; переустановка после обновлений
+                                      # источник — tg_use/SKILL.md; переустановка после обновлений пакета
 python3 -m build && twine check dist/*  # колесо для PyPI (один раз: pip3 install build twine)
 ```
 
