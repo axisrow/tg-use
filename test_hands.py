@@ -31,7 +31,8 @@ class StubPage:
         return self.evals.pop(0)
 
     async def press(self, key):
-        self.enters += 1
+        if key == 'Enter':
+            self.enters += 1
 
 
 def st(text, buttons=(), n=1, reply_buttons=()):
@@ -84,6 +85,39 @@ assert out['text'] == s3['text'] and page.enters == 1
 page = StubPage([j(s1), 'typed:false'])
 expect(RuntimeError, tg.do_send(page, '/start'), 'не удалось ввести')
 
+# send: @-текст открывает автокомплит упоминаний webk — открытый popup съедает
+# Enter (наблюдено живьём: SearcheeBot); до фикса do_send падал по тишине
+class MentionPopupPage(StubPage):
+    """Поле как webk: вставка текста с '@' будит автокомплит; Escape его гасит."""
+
+    def __init__(self, evals):
+        super().__init__(evals)
+        self.pressed = []
+        self.popup = False
+
+    async def evaluate(self, js, arg=None):
+        if 'input-message-input' in js:
+            self.popup = '@' in (arg or '')
+        return await super().evaluate(js, arg)
+
+    async def press(self, key):
+        self.pressed.append(key)
+        if key == 'Escape':
+            self.popup = False
+        elif key == 'Enter' and self.popup:
+            self.pressed.pop()  # popup съел клавишу — до поля не дошло
+
+
+s4 = st('Нашёл каналы', n=4)
+page = MentionPopupPage([j(s1), 'typed:true', j(s4)])
+out = asyncio.run(tg.do_send(page, '@SearcheeBot искусство'))
+assert out['text'] == s4['text'] and page.pressed == ['Escape', 'Enter'] and not page.popup
+
+# обычный текст тем же путём: Escape безопасен (popup не будится, ничего не ломает)
+page = MentionPopupPage([j(s1), 'typed:true', j(s4)])
+out = asyncio.run(tg.do_send(page, 'привет'))
+assert out['text'] == s4['text'] and page.pressed == ['Escape', 'Enter']
+
 # тишина: wait_reaction доходит до таймаута и падает
 page = StubPage([j(st('Меню', n=1))] * 20)
 expect(RuntimeError, tg.wait_reaction(page, st('Меню', n=1)), 'реакции бота не последовало')
@@ -111,6 +145,18 @@ assert out['text'] == '' and out['bodyLen'] == 300
 # read_state: reply-клавиатура проходит в состояние отдельной секцией reply_buttons
 out = asyncio.run(tg.read_state(StubPage([j(st('Выберите язык', reply_buttons=['Русский', 'English']))])))
 assert out['reply_buttons'] == ['Русский', 'English']
+
+# глубина взгляда: recent — тексты последних пузырей; ответ бота бывает не последним
+# сообщением (наблюдено: SearcheeBot) — без recent мозг назвал бы работающий бот сломанным
+assert 'recent' in tg.JS_STATE, 'JS_STATE не собирает recent'
+deep = st('Меню', n=5)
+deep['recent'] = ['Результаты: <b>искажённый</b> Токен secret_abc', 'Меню']
+out = asyncio.run(tg.read_state(StubPage([j(deep)])))
+assert out['recent'] == deep['recent']  # read_state отдаёт как есть
+out = tg.shown(out)
+assert out['recent'][0] == tg.scrub(deep['recent'][0])  # скраб доходит до recent
+assert tg.state_key(deep) == tg.state_key(dict(deep, recent=[]))  # ключи дедупа
+assert tg.reaction_key(deep) == tg.reaction_key(dict(deep, recent=[]))  # recent не видят
 
 # webk прячет reply-клавиатуру за тумблером: read_state сам разворачивает панель —
 # иначе reply_buttons всегда пустые (наблюдено: drwebbot, manybot)

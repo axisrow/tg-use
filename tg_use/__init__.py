@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import time
 import urllib.request
 
@@ -45,13 +46,18 @@ JS_STATE = '''() => {
     .filter(b => b.offsetParent !== null)
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
   const bubbles = [...document.querySelectorAll('.bubble.is-in')];
+  const text = b => {
+    const t = b.querySelector('.translatable-message') || b.querySelector('.message');
+    return (t ? t.innerText : '').trim();
+  };
+  const recent = bubbles.slice(-3).map(text);  // ответ бота бывает не последним пузырём (SearcheeBot)
   const last = bubbles[bubbles.length - 1];
-  if (!last) return {text: '', buttons: [], reply_buttons: reply,
+  if (!last) return {text: '', buttons: [], reply_buttons: reply, recent: [],
                      bodyLen: document.body ? document.body.innerText.length : 0};
-  const t = last.querySelector('.translatable-message') || last.querySelector('.message');
+  const t = text(last);
   const buttons = [...last.querySelectorAll('button.reply-markup-button')]
     .map(b => (b.querySelector('.reply-markup-button-text') || b).innerText.trim());
-  return {text: (t ? t.innerText : '').trim(), buttons, reply_buttons: reply, n: bubbles.length};
+  return {text: t, buttons, reply_buttons: reply, recent, n: bubbles.length};
 }'''
 
 # клик той же пробой, что нашла кнопку: между поиском и кликом DOM не пере-запрашивается,
@@ -163,36 +169,15 @@ def write_artifacts(flow: dict) -> None:
         f.write('# flow\n\n```mermaid\n' + '\n'.join(lines) + '\n```\n')
 
 
-def install_skill(repo_dir: str, home: str) -> str:
-    """Поставить скилл tg-use агенту: копия SKILL.md в ~/.claude/skills/tg-use/ с
-    командами под этот способ установки — репо: абсолютный путь к CLI рядом,
-    pip-пакет: консольный скрипт tg-use. → путь установки (переустанавливай
-    после обновлений)."""
-    # repo_dir — каталог пакета (dirname(__file__)): в репо .claude/ лежит выше,
-    # в pip-установке её нет нигде по дереву вверх — тогда SKILL.md берём из пакета
-    root, src = repo_dir, None
-    while True:
-        cand = os.path.join(root, '.claude', 'skills', 'tg-use', 'SKILL.md')
-        if os.path.exists(cand):
-            src = cand
-            break
-        parent = os.path.dirname(root)
-        if parent == root:
-            break
-        root = parent
-    if src:  # репо: CLI (шим) лежит в корне рядом — команды на абсолютный путь
-        with open(src) as f:
-            text = f.read()
-        text = text.replace('python3 tg-use.py', f'python3 {os.path.join(root, "tg-use.py")}')
-    else:  # пакет (pip install): SKILL.md внутри пакета, CLI — скрипт tg-use на PATH
-        with open(os.path.join(repo_dir, 'SKILL.md')) as f:
-            text = f.read()
-        text = text.replace('python3 tg-use.py', 'tg-use')
+def install_skill(pkg_dir: str, home: str) -> str:
+    """Поставить скилл агенту: канон tg_use/SKILL.md → ~/.claude/skills/tg-use/.
+    Источник истины один — файл в пакете (тот же едет в колесо и отдаётся
+    плагину-маркетплейсу); команды в каноне консольные (tg-use), про шим репо
+    скилл сам говорит в «Подготовке»."""
     dst_dir = os.path.join(home, '.claude', 'skills', 'tg-use')
     os.makedirs(dst_dir, exist_ok=True)
     dst = os.path.join(dst_dir, 'SKILL.md')
-    with open(dst, 'w') as f:
-        f.write(text)
+    shutil.copyfile(os.path.join(pkg_dir, 'SKILL.md'), dst)
     return dst
 
 
@@ -273,13 +258,19 @@ async def do_send(page, text: str) -> dict:
     typed = await page.evaluate(JS_TYPE, text)
     if typed != 'typed:true':
         raise RuntimeError(f'не удалось ввести «{text}» (поле ввода: {typed or "нет ответа"})')
+    # @ в тексте держит открытым автокомплит упоминаний — он съедает Enter
+    # (наблюдено живьём: SearcheeBot); гасим popup перед отправкой
+    await page.press('Escape')
     await page.press('Enter')
     return await wait_reaction(page, before)
 
 
 def shown(st: dict) -> dict:
-    """Состояние для вывода/артефактов: скраб токенов + короткий id."""
-    st = dict(st, text=scrub(st['text']))
+    """Состояние для вывода/артефактов: скраб токенов + короткий id.
+    recent (тексты последних пузырей) чистится тем же скрабом; в ключи дедупа
+    он не входит — семантика реакций остаётся на последнем пузыре."""
+    st = dict(st, text=scrub(st['text']),
+              recent=[scrub(t) for t in st.get('recent', [])])
     return dict(st, id=state_key(st)[:8])
 
 
@@ -615,7 +606,7 @@ def main() -> None:
     p_save.add_argument('--bot', default='', help='имя бота (только для первого save)')
     p_test = sub.add_parser('test', help='прогнать сценарий → artifacts/report.json (fail = exit 1)')
     p_test.add_argument('scenario', help='JSON: [{"do": {"click"/"send": ...}, "expect": {"contains"/"regex": ...}}]')
-    sub.add_parser('skill-install', help='поставить скилл tg-use агенту (~/.claude/skills/tg-use); переустанавливай после обновлений репо')
+    sub.add_parser('skill-install', help='поставить скилл tg-use агенту (~/.claude/skills/tg-use); переустанавливай после обновлений пакета')
     args = parser.parse_args()
 
     try:
@@ -632,11 +623,11 @@ def main() -> None:
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
         elif args.cmd == 'skill-install':
-            # раскладку определяет положение модуля, не точка входа: у шима,
-            # консольного скрипта и -m один __file__ (каталог пакета)
-            repo = os.path.dirname(os.path.abspath(__file__))
-            dst = install_skill(repo, os.path.expanduser('~'))
-            print(f'скилл установлен: {dst}; переустанови после обновлений репо')
+            # источник один — SKILL.md каталога пакета (dirname(__file__) у шима,
+            # консольного скрипта и -m один и тот же)
+            pkg_dir = os.path.dirname(os.path.abspath(__file__))
+            dst = install_skill(pkg_dir, os.path.expanduser('~'))
+            print(f'скилл установлен: {dst}; переустанови после обновлений пакета')
     except RuntimeError as e:  # ошибка руки (промах кнопки, нет реакции) — не traceback
         raise SystemExit(f'ошибка: {e}')
 
