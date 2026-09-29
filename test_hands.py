@@ -118,6 +118,20 @@ page = MentionPopupPage([j(s1), 'typed:true', j(s4)])
 out = asyncio.run(tg.do_send(page, 'привет'))
 assert out['text'] == s4['text'] and page.pressed == ['Escape', 'Enter']
 
+# send_file: CDP-хореография (скрепка-меню → 'Photo or Video' → перехваченный
+# chooser → подтверждение модалки Send Photo) проверена живой отправкой 2026-09-29
+# (скриншот ушёл, исходящие 6→7) — DataTransfer/setFileInputFiles-в-скрытый-инпут
+# вебка /k/ молча игнорирует. Офлайн — только ранний отказ по пути:
+assert 'bubble.is-out' in tg.JS_OUT_COUNT, 'JS_OUT_COUNT не считает исходящие'
+tmpd = tempfile.mkdtemp()
+fpath = os.path.join(tmpd, 'shot.png')
+with open(fpath, 'wb') as f:
+    f.write(b'png-bytes')
+
+# кривой путь — RuntimeError до касания браузера (единый контракт do_*-слоя)
+expect(RuntimeError, tg.do_send_file(None, StubPage([]), os.path.join(tmpd, 'нет.png')),
+       'файл не найден')
+
 # тишина: wait_reaction доходит до таймаута и падает
 page = StubPage([j(st('Меню', n=1))] * 20)
 expect(RuntimeError, tg.wait_reaction(page, st('Меню', n=1)), 'реакции бота не последовало')
@@ -215,6 +229,13 @@ expect(SystemExit, tg.cmd_test(scenario_file('notlist.json', {'do': {}})), 'не
 expect(SystemExit, tg.cmd_test(scenario_file('weird.json', [{'do': {'foo': 1}}])), 'жду {"do"')
 expect(SystemExit, tg.cmd_test(scenario_file('both.json', [{'do': {'click': 'X', 'send': '/x'}}])),
        'что-то одно')
+# send_file — валидный ключ шага: пара click+send_file падает именно на «что-то одно»,
+# а не на «жду {"do"» (иначе ключ не был бы признан)
+expect(SystemExit, tg.cmd_test(scenario_file('bothf.json', [{'do': {'click': 'X', 'send_file': fpath}}])),
+       'что-то одно')
+# битый путь в сценарии — SystemExit на предвалидации, до подключения к браузеру
+expect(SystemExit, tg.cmd_test(scenario_file('nofile.json', [{'do': {'send_file': os.path.join(tmpd, 'нет.png')}}])),
+       'файл не найден')
 
 
 # --- cmd_open: guard по hash (#@username), а не по display name из .chat-info ---

@@ -63,6 +63,7 @@ python3 tg-use.py login               # headed Chromium + persistent-профи�
 python3 tg-use.py open <@bot>         # открыть чат бота: поиск webk по username + клик, guard по peer-id
 python3 tg-use.py state               # JSON: последнее сообщение бота + подписи кнопок
 python3 tg-use.py click "<label>"     # нажать inline-кнопку → новое состояние (промах/тишина = exit 1)
+python3 tg-use.py send-file <path>    # отправить файл в открытый чат (ушёл = рост исходящих пузырей; вне МВП)
 python3 tg-use.py save [--from id --button label] [--bot @name]  # дописать artifacts/flow.json + flow.md (вне МВП)
 python3 tg-use.py test scenario.json  # сценарий [{"do": {"send"/"click"}, "expect": {"contains"/"regex"}}]
                                       # → artifacts/report.json; FAIL = exit 1 (вне МВП)
@@ -74,7 +75,7 @@ python3 -m build && twine check dist/*  # колесо для PyPI (один р�
 Категории тестов/команд (граница — цена ошибки): unit — три offline-скрипта,
 bare-дефолт `python3 test_skeleton.py && python3 test_crawl.py && python3
 test_hands.py`; `state`/`open` — live_read; `click`/`save` — live_write
-(обратимое в диалоге с ботом); `test`/`login` — live_write_danger (необратимая
+(обратимое в диалоге с ботом); `test`/`send-file`/`login` — live_write_danger (необратимая
 отправка боту / полный доступ к аккаунту). Гейты — в `.claude/settings.json`:
 владелец 2026-09-20 разрешил `Bash(python3 tg-use.py:*)` целиком — категории
 остались описанием цены ошибки, а не спросом харнеса.

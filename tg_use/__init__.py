@@ -86,6 +86,22 @@ JS_TYPE = '''(text) => {
   return 'typed:' + String(document.execCommand('insertText', false, text));
 }'''
 
+# файл в композер вебки /k/ программно НЕ вставить: DataTransfer+change,
+# CDP setFileInputFiles в скрытый инпут и drop-эмуляция молча игнорируются —
+# композер (модалка Send Photo) строится только настоящим выбором файла:
+# скрепка-меню → 'Photo or Video' → перехваченный chooser (наблюдено живьём 2026-09-29)
+# видимые кнопки по regex класса с центрами — координаты для CDP-кликов
+JS_FIND_BTN = '''(re) => JSON.stringify(
+  [...document.querySelectorAll('button, .btn-icon, [class*="menu-item"]')]
+    .filter(b => b.offsetParent !== null && new RegExp(re, 'i').test(String(b.className)))
+    .map(b => { const r = b.getBoundingClientRect();
+                return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+                        cls: String(b.className).slice(0, 60)}; }))'''
+
+# ушёл ли файл — только рост исходящих пузырей; «композер пуст»/«есть картинка» —
+# ложные критерии, на них строился ложный PASS (наблюдено живьём 2026-09-29)
+JS_OUT_COUNT = '''() => document.querySelectorAll('.bubble.is-out').length'''
+
 # reply-клавиатура webk свёрнута по умолчанию: кнопки попадают в DOM только после
 # клика по тумблеру у поля ввода (наблюдено живьём: drwebbot, manybot)
 JS_TOGGLE_REPLY = '''() => {
@@ -263,6 +279,75 @@ async def do_send(page, text: str) -> dict:
     await page.press('Escape')
     await page.press('Enter')
     return await wait_reaction(page, before)
+
+
+async def _cdp_click(page, cli, sid, cls_re: str, wait: bool = False) -> bool:
+    """CDP-клик по видимой кнопке с классом cls_re; wait=True — ждать появления.
+    CDP-клик несёт user activation и открывает file chooser, JS-клик — нет."""
+    deadline = time.monotonic() + (WAIT if wait else POLL)
+    while True:
+        btns = json.loads(await page.evaluate(JS_FIND_BTN, cls_re))
+        if btns:
+            b = btns[0]
+            await cli.Input.dispatchMouseEvent(params={'type': 'mouseMoved', 'x': b['x'], 'y': b['y']},
+                                               session_id=sid)
+            await cli.Input.dispatchMouseEvent(
+                params={'type': 'mousePressed', 'x': b['x'], 'y': b['y'], 'button': 'left', 'clickCount': 1},
+                session_id=sid)
+            await asyncio.sleep(0.12)  # настоящий клик не мгновенен
+            await cli.Input.dispatchMouseEvent(
+                params={'type': 'mouseReleased', 'x': b['x'], 'y': b['y'], 'button': 'left', 'clickCount': 1},
+                session_id=sid)
+            return True
+        if time.monotonic() > deadline:
+            return False
+        await asyncio.sleep(POLL)
+
+
+async def do_send_file(browser, page, path: str) -> dict:
+    """Отправить файл в открытый чат: скрепка-меню → 'Photo or Video' → перехваченный
+    chooser → подтверждение модалки Send Photo (см. комментарий у JS_FIND_BTN).
+    Реакцию бота не ждём — её проверяют expect/state."""
+    if not os.path.isfile(path):  # ранний отказ, единая форма с предвалидацией cmd_test
+        raise RuntimeError(f'файл не найден: {path}')
+    name = os.path.basename(path)
+    await read_state(page)  # guard: webk смонтирован (на немонтированной — честная ошибка)
+    session = await browser.get_or_create_cdp_session(target_id=None, focus=False)
+    cli = session.cdp_client.send
+    sid = session.session_id
+    n_out = await page.evaluate(JS_OUT_COUNT)
+    deadline = time.monotonic() + WAIT
+    try:
+        await cli.Page.setInterceptFileChooserDialog(params={'enabled': True}, session_id=sid)
+        if not await _cdp_click(page, cli, sid, 'attach-file'):
+            raise RuntimeError(f'кнопка вложения не найдена, {name} не отправить')
+        if not await _cdp_click(page, cli, sid, 'btn-menu-item', wait=True):
+            raise RuntimeError(f'меню вложения не открылось, {name} не отправить')
+        await asyncio.sleep(POLL)  # перехваченный chooser открывается после пункта меню
+        doc = await cli.DOM.getDocument(params={'depth': 0}, session_id=sid)
+        q = await cli.DOM.querySelectorAll(
+            params={'nodeId': doc['root']['nodeId'], 'selector': 'input[type=file]'},
+            session_id=sid)
+        for nid in q['nodeIds']:  # chooser ждёт файлы; первый успешный — хватит
+            try:
+                await cli.DOM.setFileInputFiles(params={'files': [path], 'nodeId': nid},
+                                                session_id=sid)
+                break
+            except Exception:
+                pass
+        if not await _cdp_click(page, cli, sid, 'simple-message-input-confirm', wait=True):
+            raise RuntimeError(f'вебка не собрала композер для {name} '
+                               f'(программные вложения игнорируются)')
+    finally:
+        try:
+            await cli.Page.setInterceptFileChooserDialog(params={'enabled': False}, session_id=sid)
+        except Exception:
+            pass
+    while await page.evaluate(JS_OUT_COUNT) <= n_out:
+        if time.monotonic() > deadline:
+            raise RuntimeError(f'файл не ушёл (исходящих по-прежнему {n_out})')
+        await asyncio.sleep(POLL)
+    return await read_state(page)  # сырое состояние, shown() у вызовцов — как do_send/do_click
 
 
 def shown(st: dict) -> dict:
@@ -552,10 +637,12 @@ async def cmd_test(scenario_path: str) -> None:
         raise SystemExit('сценарий: жду непустой список шагов [{"do": ..., "expect": ...}]')
     for i, step in enumerate(steps):  # кривой сценарий = ошибка до подключения к браузеру
         do = step.get('do', {}) if isinstance(step, dict) else None
-        if not isinstance(do, dict) or not ({'click', 'send'} >= set(do)):
-            raise SystemExit(f'шаг {i + 1}: жду {{"do": {{"click"/"send": ...}}}} или {{"do": {{}}}}')
+        if not isinstance(do, dict) or not ({'click', 'send', 'send_file'} >= set(do)):
+            raise SystemExit(f'шаг {i + 1}: жду {{"do": {{"click"/"send"/"send_file": ...}}}} или {{"do": {{}}}}')
         if len(do) > 1:  # click+send вместе молча брал click
-            raise SystemExit(f'шаг {i + 1}: click и send вместе — жду что-то одно')
+            raise SystemExit(f'шаг {i + 1}: несколько действий в "do" — жду что-то одно')
+        if 'send_file' in do and not os.path.isfile(do['send_file']):
+            raise SystemExit(f'шаг {i + 1}: файл не найден: {do["send_file"]}')
     browser, page = await live_page()
     results = []
     try:
@@ -567,6 +654,8 @@ async def cmd_test(scenario_path: str) -> None:
                     st = shown(await do_click(page, do['click']))
                 elif 'send' in do:
                     st = shown(await do_send(page, do['send']))
+                elif 'send_file' in do:
+                    st = shown(await do_send_file(browser, page, do['send_file']))
                 else:
                     st = shown(await read_state(page))
                 ok, why = check_expect(st['text'], step.get('expect'))
@@ -591,6 +680,19 @@ async def cmd_test(scenario_path: str) -> None:
         raise SystemExit(1)
 
 
+async def cmd_send_file(path: str) -> None:
+    """Отправить файл в открытый чат; что ответил получатель — следующий вызов state."""
+    if not os.path.isfile(path):  # отказ до подъёма браузера — как предвалидация cmd_test
+        raise SystemExit(f'файл не найден: {path}')
+    browser, page = await live_page()
+    try:
+        st = shown(await do_send_file(browser, page, path))
+        print(f'файл отправлен: {os.path.basename(path)}', flush=True)
+        print(json.dumps(st, ensure_ascii=False, indent=2))
+    finally:
+        await browser.stop()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog='tg-use', description='Руки для харнеса: Telegram-боты через web.telegram.org')
     sub = parser.add_subparsers(dest='cmd', required=True)
@@ -605,7 +707,9 @@ def main() -> None:
     p_save.add_argument('--button', default='', help='подпись кнопки ребра')
     p_save.add_argument('--bot', default='', help='имя бота (только для первого save)')
     p_test = sub.add_parser('test', help='прогнать сценарий → artifacts/report.json (fail = exit 1)')
-    p_test.add_argument('scenario', help='JSON: [{"do": {"click"/"send": ...}, "expect": {"contains"/"regex": ...}}]')
+    p_test.add_argument('scenario', help='JSON: [{"do": {"click"/"send"/"send_file": ...}, "expect": {"contains"/"regex": ...}}]')
+    p_sendfile = sub.add_parser('send-file', help='отправить файл в открытый чат (композер вебки: фото/документ)')
+    p_sendfile.add_argument('path', help='путь к файлу на диске')
     sub.add_parser('skill-install', help='поставить скилл tg-use агенту (~/.claude/skills/tg-use); переустанавливай после обновлений пакета')
     args = parser.parse_args()
 
@@ -622,6 +726,8 @@ def main() -> None:
             asyncio.run(cmd_save(args.from_id, args.button, args.bot))
         elif args.cmd == 'test':
             asyncio.run(cmd_test(args.scenario))
+        elif args.cmd == 'send-file':
+            asyncio.run(cmd_send_file(args.path))
         elif args.cmd == 'skill-install':
             # источник один — SKILL.md каталога пакета (dirname(__file__) у шима,
             # консольного скрипта и -m один и тот же)
