@@ -364,11 +364,12 @@ def shown(st: dict) -> dict:
     return dict(st, id=state_key(st)[:8])
 
 
-async def cmd_login() -> None:
+async def cmd_login(qr_hint: bool = True) -> None:
     """Headed-браузер с persistent-профилем; адрес живого браузера — в ~/.tg-use-cdp.
-    Повторный login к живому Chromium подключается, а не запускает второй: второй на том
-    же профиле молча пересоздаёт браузер в пустом temp-профиле (SingletonLock) — сессия
-    терялась при напечатанном «Сессия сохранена»."""
+    qr_hint — подсказка первого входа (login); иначе — подъём сохранённой сессии
+    (open-browser). Повторный запуск к живому Chromium подключается, а не запускает
+    второй: второй на том же профиле молча пересоздаёт браузер в пустом temp-профиле
+    (SingletonLock) — сессия терялась при напечатанном «Сессия сохранена»."""
     alive = cdp_alive()
     if alive:
         print(f'живой Chromium уже работает ({alive}); второй не запускаю — переиспользую его.')
@@ -392,6 +393,9 @@ async def cmd_login() -> None:
             input(
                 'Если QR — отсканируй телефоном (Telegram → Настройки → Устройства → '
                 'Привязать устройство); если список чатов — сессия уже живая. Enter, когда закончишь. '
+                if qr_hint else
+                'Браузер поднят на сохранённой сессии. Если увидел QR — сессия протухла, '
+                'запусти `login`. Enter, когда закончишь. '
             )
         except EOFError:  # запущено без tty: окно держится открытым до остановки процесса
             print('stdin закрыт: окно держится открытым; останови процесс (Ctrl+C/kill), когда закончишь.')
@@ -701,7 +705,8 @@ async def cmd_send_file(path: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog='tg-use', description='Руки для харнеса: Telegram-боты через web.telegram.org')
     sub = parser.add_subparsers(dest='cmd', required=True)
-    sub.add_parser('login', help='headed-браузер с persistent-профилем (QR сканирует человек)')
+    sub.add_parser('login', help='первый вход: headed-браузер с профилем (QR сканирует человек)')
+    sub.add_parser('open-browser', help='поднять уже залогиненный браузер (сессия из профиля; QR = протухла — тогда login)')
     p_open = sub.add_parser('open', help='открыть чат бота: поиск webk по username + клик, guard по peer-id hash, без отправок')
     p_open.add_argument('bot', help='бот в форме @name')
     sub.add_parser('state', help='JSON: последнее сообщение бота + подписи кнопок')
@@ -719,8 +724,8 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        if args.cmd == 'login':
-            asyncio.run(cmd_login())
+        if args.cmd in ('login', 'open-browser'):
+            asyncio.run(cmd_login(qr_hint=(args.cmd == 'login')))
         elif args.cmd == 'open':
             asyncio.run(cmd_open(args.bot))
         elif args.cmd == 'state':
