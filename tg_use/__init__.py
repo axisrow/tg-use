@@ -11,7 +11,7 @@
 ~/.tg-use-agent-profile = пароль (полный доступ к аккаунту).
 """
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 import os
 
