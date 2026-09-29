@@ -328,13 +328,18 @@ async def do_send_file(browser, page, path: str) -> dict:
         q = await cli.DOM.querySelectorAll(
             params={'nodeId': doc['root']['nodeId'], 'selector': 'input[type=file]'},
             session_id=sid)
+        set_ok = False
         for nid in q['nodeIds']:  # chooser ждёт файлы; первый успешный — хватит
             try:
                 await cli.DOM.setFileInputFiles(params={'files': [path], 'nodeId': nid},
                                                 session_id=sid)
+                set_ok = True
                 break
             except Exception:
                 pass
+        if not set_ok:
+            raise RuntimeError(f'файл не передан chooser: {name} '
+                               f'(инпутов: {len(q["nodeIds"])}, все отказали)')
         if not await _cdp_click(page, cli, sid, 'simple-message-input-confirm', wait=True):
             raise RuntimeError(f'вебка не собрала композер для {name} '
                                f'(программные вложения игнорируются)')
