@@ -59,7 +59,8 @@ python3 test_hands.py                 # руки CLI на stub-странице:
 CLI (каждая подкоманда — отдельный процесс):
 
 ```sh
-python3 tg-use.py login               # headed Chromium + persistent-профиль; CDP-адрес → ~/.tg-use-cdp
+python3 tg-use.py login               # первый вход: headed Chromium + профиль (QR сканирует человек)
+python3 tg-use.py open-browser        # поднять уже залогиненный браузер (сессия из профиля)
 python3 tg-use.py open <@bot>         # открыть чат бота: поиск webk по username + клик, guard по peer-id
 python3 tg-use.py state               # JSON: последнее сообщение бота + подписи кнопок
 python3 tg-use.py click "<label>"     # нажать inline-кнопку → новое состояние (промах/тишина = exit 1)

@@ -8,7 +8,7 @@ description: Снятие структуры меню Telegram-ботов и п�
 CLI ставится один раз: `pip3 install tg-use` и `python3 -m playwright install chromium`.
 Браузерная механика — в скилле `browser-use` (`browser-use skill install`); этот
 скилл — только профильный нюанс и процедура. В CLI нет модели: решения принимаешь
-ты, `tg-use` — только руки (login/open/state/click/save/test/send-file).
+ты, `tg-use` — только руки (login/open-browser/open/state/click/save/test/send-file).
 
 ## Подготовка
 
@@ -17,9 +17,11 @@ CLI ставится один раз: `pip3 install tg-use` и `python3 -m playw
 
 1. `tg-use login` — headed-браузер с профилем `~/.tg-use-agent-profile`
    (= пароль от аккаунта; не коммитить, не чистить). Адрес живого браузера он
-   пишет в `~/.tg-use-cdp`; окно не закрывать до конца работы. Повторный запуск
-   QR не требует. Хочешь работать с этим браузером сам через browser-use —
-   подключайся по `BU_CDP_URL=$(cat ~/.tg-use-cdp)`, это тот же Chromium.
+   пишет в `~/.tg-use-cdp`; окно не закрывать до конца работы. Повторные запуски —
+   `tg-use open-browser` (сессия из профиля, QR не нужен); `login` — первый вход
+   или если в окне появился QR. Хочешь работать с этим браузером сам через
+   browser-use — подключайся по `BU_CDP_URL=$(cat ~/.tg-use-cdp)`, это тот же
+   Chromium.
 2. `tg-use open @bot` — CLI сам находит чат по username через поиск
    webk и открывает его, проверяя peer-id (guard от чужого чата); ничего не
    отправляет. Руками в браузере ничего не открываем. Сразу после `login`
