@@ -8,7 +8,7 @@ description: Снятие структуры меню Telegram-ботов и п�
 CLI ставится один раз: `pip3 install tg-use` и `python3 -m playwright install chromium`.
 Браузерная механика — в скилле `browser-use` (`browser-use skill install`); этот
 скилл — только профильный нюанс и процедура. В CLI нет модели: решения принимаешь
-ты, `tg-use` — только руки (login/open/state/click/save/test).
+ты, `tg-use` — только руки (login/open/state/click/save/test/send-file).
 
 ## Подготовка
 
@@ -52,10 +52,16 @@ CLI ставится один раз: `pip3 install tg-use` и `python3 -m playw
 ## Сценарий
 
 Сохрани `artifacts/<bot>.scenario.json`:
-`[{"do": {"send": "/mybots"} | {"click": "<label>"}, "expect": {"contains"|"regex": "..."}}]`
+`[{"do": {"send": "/mybots"} | {"click": "<label>"} | {"send_file": "путь"}, "expect": {"contains"|"regex": "..."}}]`
 и прогони: `tg-use test artifacts/<bot>.scenario.json` → `artifacts/report.json`
 (pass/fail по шагам + латентность), падение = exit 1. `send` шлёт любой текст
 в диалог бота, не только `/`-команды — свободный ввод опросников проходит им.
+`send_file` отправляет файл с диска через настоящий путь вебки: скрепка →
+'Photo or Video' → перехваченный chooser → подтверждение модалки Send Photo
+(программные вложения вебка игнорирует); ушедший файл = рост исходящих пузырей,
+ответ бота проверяй `expect` как обычно. Разовая отправка без сценария:
+`tg-use send-file <путь>` — в открытый чат (`open @bot` сначала); ответ бота —
+следующим `state`.
 
 ## Вердикт (доказательный, трёхзначный)
 
